@@ -21,42 +21,21 @@ class RefHint(BaseModel):
 
 ## Discovery Manifest
 
-Scout agent output. One per run.
+Scout agent output. One per run. The Scout is intentionally minimal — it identifies framework, route files, and server config. Security, error models, model files, and dependency information are discovered downstream.
 
 ```python
-class SecurityScheme(BaseModel):
-    name: str
-    type: Literal["http", "apiKey", "oauth2", "openIdConnect"]
-    scheme: str | None = None
-    bearer_format: str | None = None
-    in_: Literal["header", "query", "cookie"] | None = Field(None, alias="in")
-    source_file: str | None = None
-
-class ErrorModel(BaseModel):
-    name: str
-    source_file: str | None = None
-
 class DiscoveryManifest(BaseModel):
     framework: str
     language: str
-    entry_points: list[str] = []
     route_files: list[str] = []
-    model_files: list[str] = []
-    security_schemes: list[SecurityScheme] = []
     servers: list[str] = []
     base_path: str = ""
-    error_models: list[ErrorModel] = []
-    cors_config: dict | None = None
-    dependency_graph: dict[str, list[str]] = {}
-    class_to_file: dict[str, str] = {}
 ```
 
 ### Field notes
 
-- `dependency_graph`: maps each file to the list of files it imports. Used by Ref Resolver to walk transitive dependencies.
-- `class_to_file`: maps class/model names to the file that defines them. Fallback resolution when imports are unavailable.
 - `servers`: raw URLs (e.g. `["http://localhost:8000"]`). Infrastructure wraps these into OpenAPI `servers` objects.
-- `error_models`: named error shapes found in global handlers. Injected into Route Extractor context so it can reference them in error responses.
+- `base_path`: API prefix (e.g. `"/api"`). Prepended to endpoint paths by the Route Extractor.
 
 ## Endpoint Descriptor
 
@@ -188,30 +167,18 @@ class ScoutWorkingState(BaseModel):
     """Re-injected at every ReAct step to prevent context loss."""
     framework: str | None = None
     language: str | None = None
-    entry_points: list[str] = []
     route_files: list[str] = []
-    model_files: list[str] = []
-    security_schemes: list[SecurityScheme] = []
     servers: list[str] = []
     base_path: str = ""
-    error_models: list[ErrorModel] = []
-    dependency_graph: dict[str, list[str]] = {}
-    class_to_file: dict[str, str] = {}
     scratchpad: str = ""
     remaining_tasks: list[str] = [
         "identify_framework",
-        "find_entry_points",
         "find_route_files",
-        "find_model_files",
-        "identify_security",
         "find_servers",
-        "find_error_handlers",
-        "build_dependency_graph",
-        "build_class_to_file_map",
     ]
 ```
 
-When the Scout calls `update_state(updates)`, the fields in `updates` are merged into this object. At the end, `write_artifact("discovery_manifest", ...)` serializes the accumulated state into a `DiscoveryManifest` — no lossy summarization.
+When the Scout calls `update_state(updates)`, the fields in `updates` are merged into this object. When `write_artifact` is called (or max turns reached), the harness builds the `DiscoveryManifest` from the accumulated state via `state_to_manifest()` — no lossy summarization, and the LLM-provided data in `write_artifact` is ignored to prevent hallucinated additions.
 
 ## Serialization Conventions
 

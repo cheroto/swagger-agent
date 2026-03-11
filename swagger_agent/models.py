@@ -37,16 +37,9 @@ class ErrorModel(BaseModel):
 class DiscoveryManifest(BaseModel):
     framework: str
     language: str
-    entry_points: list[str] = []
     route_files: list[str] = []
-    model_files: list[str] = []
-    security_schemes: list[SecurityScheme] = []
     servers: list[str] = []
     base_path: str = ""
-    error_models: list[ErrorModel] = []
-    cors_config: dict | None = None
-    dependency_graph: dict[str, list[str]] = {}
-    class_to_file: dict[str, str] = {}
 
 
 # --- Endpoint Descriptor ---
@@ -143,24 +136,12 @@ class ScoutWorkingState(BaseModel):
 
     framework: str | None = None
     language: str | None = None
-    entry_points: list[str] = []
     route_files: list[str] = []
-    model_files: list[str] = []
-    security_schemes: list[SecurityScheme] = []
     servers: list[str] = []
     base_path: str = ""
-    error_models: list[ErrorModel] = []
-    dependency_graph: dict[str, list[str]] = {}
-    class_to_file: dict[str, str] = {}
     scratchpad: str = ""
     remaining_tasks: list[str] = [
         "identify_framework",
-        "find_entry_points",
         "find_route_files",
-        "find_model_files",
-        "identify_security",
         "find_servers",
-        "find_error_handlers",
-        "build_dependency_graph",
-        "build_class_to_file_map",
     ]

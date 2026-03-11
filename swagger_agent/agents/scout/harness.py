@@ -43,15 +43,9 @@ class StateUpdates(BaseModel):
 
     framework: str | None = None
     language: str | None = None
-    entry_points: list[str] | None = None
     route_files: list[str] | None = None
-    model_files: list[str] | None = None
-    security_schemes: list[dict] | None = None
     servers: list[str] | None = None
     base_path: str | None = None
-    error_models: list[dict] | None = None
-    dependency_graph: dict[str, list[str]] | None = None
-    class_to_file: dict[str, str] | None = None
     completed_tasks: list[str] = Field(
         default_factory=list,
         description="Task names to mark as complete and remove from remaining_tasks",
@@ -205,20 +199,11 @@ def apply_state_update(state: ScoutWorkingState, updates: StateUpdates) -> Scout
 
         current = data[key]
         if isinstance(current, list) and isinstance(value, list):
-            if key in ("security_schemes", "error_models"):
-                existing_names = {s["name"] for s in current if isinstance(s, dict)}
-                for item in value:
-                    if isinstance(item, dict) and item.get("name") not in existing_names:
-                        current.append(item)
-                        existing_names.add(item["name"])
-            else:
-                seen = set(current)
-                for item in value:
-                    if item not in seen:
-                        current.append(item)
-                        seen.add(item)
-        elif isinstance(current, dict) and isinstance(value, dict):
-            current.update(value)
+            seen = set(current)
+            for item in value:
+                if item not in seen:
+                    current.append(item)
+                    seen.add(item)
         else:
             data[key] = value
 
@@ -236,15 +221,9 @@ def state_to_manifest(state: ScoutWorkingState) -> DiscoveryManifest:
     return DiscoveryManifest(
         framework=state.framework or "unknown",
         language=state.language or "unknown",
-        entry_points=state.entry_points,
         route_files=state.route_files,
-        model_files=state.model_files,
-        security_schemes=state.security_schemes,
         servers=state.servers,
         base_path=state.base_path,
-        error_models=state.error_models,
-        dependency_graph=state.dependency_graph,
-        class_to_file=state.class_to_file,
     )
 
 
@@ -322,9 +301,9 @@ class ScoutEventHandler:
 
     def on_manifest(self, manifest: DiscoveryManifest) -> None:
         logger.info(
-            "Scout complete: %s/%s, %d routes, %d models",
+            "Scout complete: %s/%s, %d routes",
             manifest.framework, manifest.language,
-            len(manifest.route_files), len(manifest.model_files),
+            len(manifest.route_files),
         )
 
     def on_max_turns(self, turn: int) -> None:
@@ -402,11 +381,9 @@ def run_scout(
 
             # Intercept write_artifact
             if tool_name == "write_artifact":
-                data = tool_args.get("data", {})
-                try:
-                    manifest = DiscoveryManifest.model_validate(data)
-                except Exception:
-                    manifest = state_to_manifest(state)
+                # Always build manifest from accumulated state — never trust
+                # LLM-provided data which may contain hallucinated additions.
+                manifest = state_to_manifest(state)
                 event_handler.on_manifest(manifest)
 
                 turn_action_records.append({

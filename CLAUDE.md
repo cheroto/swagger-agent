@@ -96,17 +96,13 @@ The orchestrator calls `mark_complete()` only when `schemas_complete` is true an
 
 ### Scout Agent
 
-Analyzes the project to produce a discovery manifest. Identifies:
+Analyzes the project to produce a discovery manifest. Identifies exactly three things:
 
 - Framework and language
-- Entry points and route files
-- Model/DTO files
-- Security schemes (JWT, API key, OAuth2, basic auth) and their source locations
+- Route files (files containing HTTP endpoint definitions)
 - Server URLs and base paths
-- Global error handlers and error model shapes
-- CORS configuration
-- Import-based dependency graph between model files
-- Class-to-file mapping (which class/model names are defined in which files)
+
+Security schemes, error models, model files, dependency graphs, and class-to-file mappings are **not** Scout responsibilities. Security and error information is discovered by the Route Extractor from the route files themselves. Model files and their relationships are resolved by infrastructure (Ref Resolver) from the `ref_hint` import lines in endpoint descriptors.
 
 **Tools:**
 
@@ -126,8 +122,8 @@ The Scout cannot read full files. It reads selectively — imports, decorators, 
 
 - **Deterministic trace** (harness-managed, append-only) — auto-built from tool calls. Records tool name, args, and a deterministic summary (file count from glob, line count from read, match count from grep) plus the list of all files touched. The LLM never writes to this layer. Ensures the agent always knows what it already explored.
 - **Scratchpad** (LLM-managed, full rewrite each turn) — markdown working memory the LLM regenerates entirely via `update_scratchpad` at the start of each turn, reflecting on the previous tool result. Contains findings so far, open questions, key context snippets, and next steps. Size-budgeted (~1500 tokens). Replaces conversation history as the agent's "thinking" memory.
-- **Structured findings** (LLM-managed, accumulating) — the actual discoveries (framework, route files, security schemes, etc.) updated via `update_state`. Lists append (deduped), scalars overwrite. Validated against a known schema. Eventually serialized into the discovery manifest.
-- **Remaining tasks** — predefined checklist (detect_framework, find_route_files, etc.). The LLM checks items off via `update_state`. The harness tracks completion.
+- **Structured findings** (LLM-managed, accumulating) — the actual discoveries (framework, route files, servers) updated via `update_state`. Lists append (deduped), scalars overwrite. Validated against a known schema. Eventually serialized into the discovery manifest.
+- **Remaining tasks** — predefined checklist (identify_framework, find_route_files, find_servers). The LLM checks items off via `update_state`. The harness tracks completion.
 
 **Turn cycle:** Each turn, the harness injects: system prompt + deterministic trace + previous scratchpad + structured findings + remaining tasks + latest tool result. The LLM emits: `update_scratchpad` (reflecting on the observation) + next tool call. One LLM inference per turn. No growing chat log.
 
@@ -173,17 +169,16 @@ Each schema reference is a `ref_hint` object, not a bare string:
 
 Cannot glob, grep, or explore. Reads exactly one file per invocation.
 
-**Injected context** (prepared by infrastructure — not the full manifest):
+**Injected context** (prepared by infrastructure — from the discovery manifest):
 ```json
 {
   "framework": "fastapi",
   "base_path": "/api",
-  "security_schemes": ["BearerAuth"],
-  "global_auth": "BearerAuth",
-  "error_models": ["GenericError", "ValidationError"],
   "target_file": "app/api/routes/users.py"
 }
 ```
+
+The Route Extractor discovers security schemes and error models directly from the route file's code (auth middleware, decorators, error handling). It does not receive pre-identified security or error information.
 
 Each invocation is stateless and independent. The agent never sees other endpoint descriptors.
 
@@ -238,13 +233,15 @@ After all routes are extracted, this module resolves `ref_hint` objects from end
 
 1. If `resolution` is `"unresolvable"` → skip resolution, pass to Assembler for placeholder handling.
 2. If `resolution` is `"import"` → parse `import_source` to extract the module path, resolve it to a file path relative to the project root. This is deterministic path resolution (no fuzzy matching).
-3. If `resolution` is `"class_to_file"` (or import resolution fails) → look up `ref_hint` name in the `class_to_file` mapping from the discovery manifest.
-4. If both mechanisms fail → log a warning, mark as unresolved. The Assembler emits a placeholder.
+3. If `resolution` is `"class_to_file"` (or import resolution fails) → look up `ref_hint` name in the class-to-file mapping that infrastructure builds by parsing import lines from already-resolved model files.
+4. If all mechanisms fail → log a warning, mark as unresolved. The Assembler emits a placeholder.
+
+The `class_to_file` mapping and `dependency_graph` are **not** provided by the Scout. Infrastructure builds them incrementally by parsing import statements from model files as they are discovered through ref_hint resolution. This keeps the Scout focused and avoids redundant whole-project scanning.
 
 **After resolution:**
 
 1. Collects all resolved file paths from the steps above
-2. Walks the import dependency graph to find all transitively referenced model files
+2. Walks the import dependency graph (built by parsing imports from resolved files) to find all transitively referenced model files
 3. Produces a topologically sorted extraction queue of **only reachable model files**
 4. For each file in the queue, prepares context (direct dependency schemas only) and invokes the Schema Extractor agent
 5. After each schema extraction, checks for new unresolved `$ref`s and adds newly discovered files to the queue
@@ -258,7 +255,7 @@ Filters artifacts from the store to produce the minimum context packet each agen
 
 ### Assembler Module
 
-Takes all artifacts currently in the store and produces an OpenAPI 3.0 YAML spec. Resolves `ref_hint` objects from endpoint descriptors to `$ref` paths in `components/schemas`. Wires in `securitySchemes`, `servers`, and default error responses from the discovery manifest. Runs automatically on every artifact write. Produces partial specs when data is incomplete — never blocks on missing information.
+Takes all artifacts currently in the store and produces an OpenAPI 3.0 YAML spec. Resolves `ref_hint` objects from endpoint descriptors to `$ref` paths in `components/schemas`. Wires in `servers` from the discovery manifest, and derives `securitySchemes` from security declarations in endpoint descriptors. Runs automatically on every artifact write. Produces partial specs when data is incomplete — never blocks on missing information.
 
 **Unresolvable ref handling:** When a `ref_hint` has `resolution: "unresolvable"` or failed all resolution attempts, the Assembler emits a placeholder schema:
 
@@ -337,7 +334,7 @@ sequenceDiagram
 
 All inter-agent communication happens through structured JSON artifacts in the artifact store. Never prose. Never partial YAML.
 
-- **`discovery_manifest`** — Scout's output. Framework info, file lists, security schemes, servers, error config, dependency graph, class-to-file mapping.
+- **`discovery_manifest`** — Scout's output. Framework, language, route files, servers, and base path.
 - **`endpoint_descriptor`** — Route Extractor's output. One per route file. All endpoints with full metadata including auth and error responses. Uses `ref_hint` objects (name + import_source + resolution strategy) for schema references.
 - **`schema_descriptor`** — Schema Extractor's output. One per model file. JSON Schema definitions with validation constraints.
 

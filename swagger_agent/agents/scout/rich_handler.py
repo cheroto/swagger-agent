@@ -35,7 +35,7 @@ class RichScoutHandler(ScoutEventHandler):
 
         # Dashboard state
         self._current_turn: int = 0
-        self._total_tasks: int = 9
+        self._total_tasks: int = 3
         self._remaining_tasks: list[str] = []
         self._completed_tasks: list[str] = []
         self._scratchpad: str = ""
@@ -163,9 +163,7 @@ class RichScoutHandler(ScoutEventHandler):
 
         # Rebuild completed tasks
         all_tasks = [
-            "identify_framework", "find_entry_points", "find_route_files",
-            "find_model_files", "identify_security", "find_servers",
-            "find_error_handlers", "build_dependency_graph", "build_class_to_file_map",
+            "identify_framework", "find_route_files", "find_servers",
         ]
         self._completed_tasks = [t for t in all_tasks if t not in remaining_tasks]
         self._refresh()
@@ -177,9 +175,7 @@ class RichScoutHandler(ScoutEventHandler):
     def on_state_update(self, turn: int, updates: StateUpdates, remaining_tasks: list[str]) -> None:
         self._remaining_tasks = list(remaining_tasks)
         all_tasks = [
-            "identify_framework", "find_entry_points", "find_route_files",
-            "find_model_files", "identify_security", "find_servers",
-            "find_error_handlers", "build_dependency_graph", "build_class_to_file_map",
+            "identify_framework", "find_route_files", "find_servers",
         ]
         self._completed_tasks = [t for t in all_tasks if t not in remaining_tasks]
 
@@ -189,16 +185,9 @@ class RichScoutHandler(ScoutEventHandler):
             self._findings["Framework"] = updates_dict["framework"]
         if "language" in updates_dict:
             self._findings["Language"] = updates_dict["language"]
-        if "entry_points" in updates_dict:
-            self._findings["Entry points"] = ", ".join(updates_dict["entry_points"])
         if "route_files" in updates_dict:
             count = len(updates_dict["route_files"])
-            self._findings["Route files"] = f"+{count} (total: {len(remaining_tasks) + count})"
-        if "model_files" in updates_dict:
-            self._findings["Model files"] = f"+{len(updates_dict['model_files'])}"
-        if "security_schemes" in updates_dict:
-            names = [s.get("name", "?") for s in updates_dict["security_schemes"]]
-            self._findings["Security"] = ", ".join(names)
+            self._findings["Route files"] = f"+{count}"
         if "servers" in updates_dict:
             self._findings["Servers"] = ", ".join(updates_dict["servers"])
 
@@ -233,13 +222,9 @@ class RichScoutHandler(ScoutEventHandler):
         self._refresh()
 
     def on_manifest(self, manifest: DiscoveryManifest) -> None:
-        # Add final turn to log before stopping
         self._findings["Framework"] = manifest.framework
         self._findings["Language"] = manifest.language
         self._findings["Route files"] = str(len(manifest.route_files))
-        self._findings["Model files"] = str(len(manifest.model_files))
-        schemes = ", ".join(s.name for s in manifest.security_schemes) or "-"
-        self._findings["Security"] = schemes
         self._findings["Servers"] = ", ".join(manifest.servers) or "-"
         self._refresh()
 

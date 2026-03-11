@@ -120,6 +120,8 @@ flowchart TD
 
 The explorer. Scans the project structure to produce a discovery manifest. Runs exactly once. Uses an internal working state to accumulate findings across many tool calls without losing information.
 
+The Scout is intentionally minimal — it identifies the framework, route files, and server config. Security schemes, error models, model files, and dependency graphs are discovered downstream by the Route Extractor and infrastructure.
+
 ### Behavior
 
 ```mermaid
@@ -129,21 +131,11 @@ stateDiagram-v2
     UpdateState --> CheckRemaining: state updated
 
     CheckRemaining --> FindRouteFiles: routes not found yet
-    CheckRemaining --> FindModelFiles: models not found yet
-    CheckRemaining --> DetectSecurity: security not found yet
     CheckRemaining --> DetectServers: servers not found yet
-    CheckRemaining --> DetectErrorHandlers: errors not found yet
-    CheckRemaining --> BuildDepGraph: dep graph not built yet
-    CheckRemaining --> BuildClassMap: class map not built yet
     CheckRemaining --> WriteManifest: all tasks complete
 
     FindRouteFiles --> UpdateState
-    FindModelFiles --> UpdateState
-    DetectSecurity --> UpdateState
     DetectServers --> UpdateState
-    DetectErrorHandlers --> UpdateState
-    BuildDepGraph --> UpdateState
-    BuildClassMap --> UpdateState
 
     WriteManifest --> [*]
 ```
@@ -190,33 +182,13 @@ The actual discoveries, updated via `update_state`. Lists append (deduped), scal
 {
   "framework": null,
   "language": null,
-  "entry_point": null,
   "route_files": [],
-  "model_files": [],
-  "security": {
-    "schemes": [],
-    "global_auth": null,
-    "public_patterns": []
-  },
   "servers": [],
-  "error_handling": {
-    "global_handler": null,
-    "error_models": [],
-    "framework_defaults": []
-  },
-  "cors": null,
-  "dependency_graph": {},
-  "class_to_file": {},
+  "base_path": "",
   "remaining_tasks": [
-    "detect_framework",
+    "identify_framework",
     "find_route_files",
-    "find_model_files",
-    "detect_security",
-    "detect_servers",
-    "detect_error_handlers",
-    "detect_cors",
-    "build_dependency_graph",
-    "build_class_map"
+    "find_servers"
   ]
 }
 ```
@@ -258,8 +230,8 @@ The scratchpad reflects on the **previous** tool result (which was just injected
 #### Termination
 
 Two mechanisms:
-- **Normal:** The LLM calls `write_artifact` when `remaining_tasks` is empty. This serializes the accumulated structured findings directly into the discovery manifest — no lossy summarization step.
-- **Safety net:** The harness enforces a max turn count. If reached, it calls `write_artifact` with whatever findings exist.
+- **Normal:** The LLM calls `write_artifact` when `remaining_tasks` is empty. The harness ignores the LLM-provided data and builds the manifest from the accumulated structured state via `state_to_manifest()` — no lossy summarization step, and no risk of the LLM inventing data that wasn't in the state.
+- **Safety net:** The harness enforces a max turn count. If reached, it builds the manifest from whatever state exists.
 
 #### Why No Conversation History
 
@@ -296,7 +268,7 @@ graph LR
 | `read_file_range` | `(path: str, start: int, end: int)` | Read specific line range (config blocks) | ~50B × line count |
 | `update_state` | `(updates: dict)` | Merge findings into structured state, check off remaining_tasks | N/A (state mutation) |
 | `update_scratchpad` | `(content: str)` | Full rewrite of the markdown scratchpad — reflects on last observation, records insights and next steps (~1500 token budget) | N/A (state mutation) |
-| `write_artifact` | `(type: "discovery_manifest", data: dict)` | Output the manifest to the artifact store | N/A (output) |
+| `write_artifact` | `(type: "discovery_manifest", data: dict)` | Signal completion — harness builds manifest from accumulated state | N/A (output) |
 
 **No `read_file` (full file).** The Scout reads selectively to stay within context budget.
 
@@ -312,23 +284,23 @@ graph LR
   },
   "scratchpad": "...LLM's previous scratchpad (markdown)...",
   "structured_findings": { "...see Layer 3 above..." },
-  "remaining_tasks": ["detect_security", "build_dependency_graph"],
+  "remaining_tasks": ["find_servers"],
   "last_tool_result": "...raw output from the previous tool call..."
 }
 ```
 
-On the first turn, `deterministic_trace` is empty, `scratchpad` is empty, `structured_findings` has all nulls/empty lists, and `remaining_tasks` has all 9 items. Each subsequent turn reflects all accumulated state.
+On the first turn, `deterministic_trace` is empty, `scratchpad` is empty, `structured_findings` has all nulls/empty lists, and `remaining_tasks` has all 3 items. Each subsequent turn reflects all accumulated state.
 
 ### Context Accumulation
 
 | Source | Size | Growth |
 |--------|------|--------|
-| System prompt | ~2KB | Constant |
+| System prompt | ~1.5KB | Constant |
 | Deterministic trace | ~50B × turn count | Linear but compact (summaries only) |
 | Scratchpad | ~1.5KB max | Constant (full rewrite, size-budgeted) |
-| Structured findings | ~1-3KB | Grows with discoveries, bounded by schema |
+| Structured findings | ~0.5-1KB | Grows with route file count, bounded |
 | Last tool result | ~0.5-5KB | Per-step, not accumulated |
-| **Total per turn** | **~5-12KB** | **Bounded regardless of turn count** |
+| **Total per turn** | **~4-10KB** | **Bounded regardless of turn count** |
 
 No conversation history. The three state layers fully replace it. Old tool results (glob listings, grep matches, file snippets) are not retained — their insights are captured in the scratchpad and findings.
 
@@ -338,54 +310,14 @@ No conversation history. The three state layers fully replace it. Old tool resul
 {
   "framework": "fastapi | express | nestjs | spring",
   "language": "python | typescript | java",
-  "entry_point": "app/main.py",
   "route_files": [
     "app/api/routes/users.py",
     "app/api/routes/articles.py"
   ],
-  "model_files": [
-    "app/models/user.py",
-    "app/models/article.py"
-  ],
-  "security": {
-    "schemes": [
-      {
-        "name": "BearerAuth",
-        "type": "http",
-        "scheme": "bearer",
-        "source_file": "app/core/security.py",
-        "evidence": "OAuth2PasswordBearer(tokenUrl='token')"
-      }
-    ],
-    "global_auth": "BearerAuth",
-    "public_patterns": ["/login", "/register"]
-  },
   "servers": [
-    { "url": "http://localhost:8000/api", "source": "main.py" }
+    "http://localhost:8000"
   ],
-  "error_handling": {
-    "global_handler": "app/core/errors.py",
-    "error_models": ["GenericError", "ValidationError"],
-    "framework_defaults": ["422 ValidationError"]
-  },
-  "cors": {
-    "origins": ["*"],
-    "source_file": "app/main.py"
-  },
-  "dependency_graph": {
-    "app/models/profile.py": [],
-    "app/models/user.py": ["app/models/profile.py"],
-    "app/models/article.py": ["app/models/user.py", "app/models/tag.py"],
-    "app/models/tag.py": []
-  },
-  "class_to_file": {
-    "Profile": "app/models/profile.py",
-    "User": "app/models/user.py",
-    "Article": "app/models/article.py",
-    "Tag": "app/models/tag.py",
-    "NewUserRequest": "app/models/user.py",
-    "ArticleResponse": "app/models/article.py"
-  }
+  "base_path": "/api"
 }
 ```
 
@@ -396,37 +328,22 @@ flowchart TD
     A["glob(**/*.py, **/*.ts, **/*.java)"] --> B{Identify framework}
     B -->|"grep for @app, router, @Controller"| C[Framework detected]
     C --> SP1["update_scratchpad: reflect on results"]
-    SP1 --> US1["update_state(framework, language)<br/>remove detect_framework"]
+    SP1 --> US1["update_state(framework, language)<br/>remove identify_framework"]
 
     US1 --> D["grep for route decorators<br/>@Get, @Post, router.get, @app.post"]
     D --> SP2["update_scratchpad: distill matches"]
     SP2 --> US2["update_state(route_files)<br/>remove find_route_files"]
 
-    US1 --> F["grep for model patterns<br/>BaseModel, @Entity, class-validator"]
-    F --> SP3["update_scratchpad: distill matches"]
-    SP3 --> US3["update_state(model_files)<br/>remove find_model_files"]
-
-    US1 --> H["grep for auth patterns<br/>OAuth2, passport, @UseGuards, SecurityFilterChain"]
-    H --> SP4["update_scratchpad: distill matches"]
-    SP4 --> US4["update_state(security)<br/>remove detect_security"]
-
-    US1 --> J["read_file_head on entry point<br/>+ grep for CORS, port, base_path"]
-    J --> SP5["update_scratchpad: distill config"]
-    SP5 --> US5["update_state(servers, cors)<br/>remove detect_servers, detect_cors"]
-
-    US3 --> L["read_file_head on each model file<br/>extract imports + class names"]
-    L --> SP6["update_scratchpad: distill deps"]
-    SP6 --> US6["update_state(dependency_graph, class_to_file)<br/>remove build_dependency_graph, build_class_map"]
+    US1 --> J["read_file_head on entry point<br/>+ grep for port, base_path"]
+    J --> SP3["update_scratchpad: distill config"]
+    SP3 --> US3["update_state(servers, base_path)<br/>remove find_servers"]
 
     US2 --> CHECK{remaining_tasks empty?}
     US3 --> CHECK
-    US4 --> CHECK
-    US5 --> CHECK
-    US6 --> CHECK
 
     CHECK -->|no| NEXT[Pick next remaining task]
     NEXT --> D
-    CHECK -->|yes| N["write_artifact(state → discovery_manifest)"]
+    CHECK -->|yes| N["write_artifact → harness builds manifest from state"]
 ```
 
 At each turn, the LLM first calls `update_scratchpad` to reflect on the previous tool result (distilling insights from raw output), then calls `update_state` to merge structured findings, then picks the next action based on `remaining_tasks`. The scratchpad ensures no insight is lost between turns even though raw tool results are discarded.
@@ -479,20 +396,17 @@ graph LR
 
 ### Injected Context
 
-Prepared by the Context Preparer — a filtered subset of the discovery manifest, not the full manifest.
+Prepared by the Context Preparer — a filtered subset of the discovery manifest.
 
 ```json
 {
   "framework": "fastapi",
   "base_path": "/api",
-  "security_schemes": ["BearerAuth"],
-  "global_auth": "BearerAuth",
-  "error_models": ["GenericError", "ValidationError"],
   "target_file": "app/api/routes/users.py"
 }
 ```
 
-~300 bytes. The agent knows the framework (so it knows what decorators/patterns to look for), the base path (so it can build full paths), what security schemes exist (so it can map middleware to scheme names), and what error models are available (so it can assign them to error responses).
+~150 bytes. The agent knows the framework (so it knows what decorators/patterns to look for) and the base path (so it can build full paths). Security schemes and error models are discovered directly from the route file's code — auth middleware, decorators, error handling patterns, and import lines.
 
 ### Context Accumulation
 
@@ -834,7 +748,7 @@ flowchart TD
 
     C -->|"unresolvable"| D[Skip — Assembler handles<br/>with placeholder schema]
     C -->|"import"| E[Parse import_source<br/>resolve module → file path]
-    C -->|"class_to_file"| F[Look up ref_hint name<br/>in class_to_file map]
+    C -->|"class_to_file"| F[Look up ref_hint name<br/>in infra-built class_to_file map]
 
     E --> G{File found?}
     G -->|yes| H[Add to extraction queue]
@@ -849,7 +763,7 @@ flowchart TD
     style H fill:#4caf50,color:#fff
 ```
 
-Import-path resolution is the primary mechanism — it's deterministic and doesn't depend on name matching. The `class_to_file` fallback covers same-package references and cases where the import line wasn't captured.
+Import-path resolution is the primary mechanism — it's deterministic and doesn't depend on name matching. The `class_to_file` fallback is built by infrastructure from import lines parsed during model file resolution (not provided by the Scout). It covers same-package references and cases where the import line wasn't captured.
 
 ### Schema Extraction Loop
 
