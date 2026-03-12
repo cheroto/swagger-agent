@@ -1,0 +1,53 @@
+{
+  "_comment": "Test repository manifest. Repos are cloned on demand by conftest.py into tests/e2e/repos/.",
+  "repos": {
+    "rest-api-node": {
+      "url": "https://github.com/renanlopescoder/rest-api-node.git",
+      "commit": "d57bfa25677f13e907a05a1b00f43896dff4976b",
+      "framework": "express",
+      "language": "javascript"
+    },
+    "spring-boot-blog": {
+      "url": "https://github.com/osopromadze/Spring-Boot-Blog-REST-API.git",
+      "commit": "29a2558f5dfe9d65cd4ac8f23184f27ce939d0aa",
+      "framework": "spring",
+      "language": "java"
+    },
+    "laravel-realworld": {
+      "url": "https://github.com/gothinkster/laravel-realworld-example-app.git",
+      "commit": "e45c37c8a5f57131c9d239f1fc104c227e66b6ee",
+      "framework": "laravel",
+      "language": "php"
+    },
+    "aspnetcore-realworld": {
+      "url": "https://github.com/gothinkster/aspnetcore-realworld-example-app.git",
+      "commit": "7e428ace8299959e3bc20b3910b00e23a269c3bc",
+      "framework": "aspnetcore",
+      "language": "csharp"
+    },
+    "passwordless-auth-rust": {
+      "url": "https://github.com/hoangsonww/Passwordless-Auth-Rust.git",
+      "commit": "dc0d64d77a689ece6129a1a61a655fd1ac5ee29e",
+      "framework": "axum",
+      "language": "rust"
+    },
+    "levo-schema-service": {
+      "url": "https://github.com/PrakshayJoshi/levo-schema-service.git",
+      "commit": "964944d437d07da0dca15b068fd2e50ebf2d398f",
+      "framework": "fastapi",
+      "language": "python"
+    },
+    "9jauni": {
+      "url": "https://github.com/ojiehdavid5/9jauni.git",
+      "commit": "c6c217b01a37efbcbf475121a0e164871399626d",
+      "framework": "go-net-http",
+      "language": "go"
+    },
+    "energy-monitoring-app": {
+      "url": "https://github.com/Toltar/energy-monitoring-app.git",
+      "commit": "a1abaf166d5ba6dec4aaf9da7bfff658509c4a49",
+      "framework": "aws-lambda",
+      "language": "typescript"
+    }
+  }
+}

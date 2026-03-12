@@ -565,7 +565,7 @@ ROUTE_GOLDEN: list[RouteGolden] = [
         phase1=Phase1Golden(
             min_endpoints=1,
             endpoints=[
-                ExpectedPhase1Endpoint(method="GET", path="/get-history"),
+                ExpectedPhase1Endpoint(method="GET", path="/energy/history"),
             ],
             has_auth_patterns=True,  # Should detect authorizer?.claims pattern
             has_auth_imports=False,

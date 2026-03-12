@@ -5,3 +5,4 @@ dist/
 build/
 .env
 outputs/
+tests/e2e/repos/

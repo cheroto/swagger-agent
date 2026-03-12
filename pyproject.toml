@@ -24,6 +24,7 @@ dev = [
 markers = [
     "e2e: end-to-end tests requiring LLM server and test repos",
 ]
+norecursedirs = ["tests/e2e/repos"]
 
 [build-system]
 requires = ["hatchling"]
