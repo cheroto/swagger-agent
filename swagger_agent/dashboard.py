@@ -613,62 +613,62 @@ class PipelineDashboard(ScoutEventHandler):
         """Accumulated spec artifacts — data that will become the swagger."""
         parts: list[str] = []
 
-        # Identity (from Scout — appears as soon as discovered)
+        # Identity line: framework (language) · base · servers — all on one line
+        identity: list[str] = []
         if self._spec_framework:
-            parts.append(
-                f"[bold]{self._spec_framework}[/bold] "
-                f"[dim]({self._spec_language})[/dim]"
-            )
+            identity.append(f"[bold]{self._spec_framework}[/bold][dim]/{self._spec_language}[/dim]")
         if self._spec_base_path:
-            parts.append(f"[dim]Base:[/dim] {self._spec_base_path}")
+            identity.append(self._spec_base_path)
         if self._spec_servers:
-            parts.append(f"[dim]Servers:[/dim] {', '.join(self._spec_servers[:2])}")
+            identity.append(", ".join(self._spec_servers[:2]))
+        if identity:
+            parts.append("  ".join(identity))
 
-        # Route files (from Scout, before extraction even starts)
+        # Counts line: route files · security — compact
+        counts: list[str] = []
         if self._spec_route_files:
-            parts.append(f"[dim]Route files:[/dim] {len(self._spec_route_files)}")
-
-        # Security schemes
+            counts.append(f"[dim]Routes:[/dim] {len(self._spec_route_files)} files")
         if self._spec_security_schemes:
-            schemes = ", ".join(sorted(self._spec_security_schemes))
-            parts.append(f"[dim]Security:[/dim] [bold]{schemes}[/bold]")
+            counts.append(f"[dim]Auth:[/dim] [bold]{', '.join(sorted(self._spec_security_schemes))}[/bold]")
+        if counts:
+            parts.append("  ".join(counts))
 
-        # Endpoints
+        # Endpoints — compact table-like rows, truncate long paths
         if self._spec_endpoints:
+            MC = {"GET": "green", "POST": "yellow", "PUT": "blue",
+                  "PATCH": "cyan", "DELETE": "red", "HEAD": "dim", "OPTIONS": "dim"}
             parts.append("")
-            method_colors = {
-                "GET": "green", "POST": "yellow", "PUT": "blue",
-                "PATCH": "cyan", "DELETE": "red", "HEAD": "dim", "OPTIONS": "dim",
-            }
             parts.append(f"[dim]Endpoints[/dim] [bold]{len(self._spec_endpoints)}[/bold]")
-            max_show = 10
+            max_show = 8
             for method, path, sec in self._spec_endpoints[:max_show]:
-                color = method_colors.get(method.upper(), "white")
-                lock = " [dim]🔓[/dim]" if sec else ""
-                parts.append(f"  [{color}]{method:7s}[/{color}] {path}{lock}")
+                c = MC.get(method.upper(), "white")
+                # Truncate long paths to keep lines short
+                display_path = path if len(path) <= 40 else path[:37] + "..."
+                lock = " 🔓" if sec else ""
+                parts.append(f"  [{c}]{method:6s}[/{c}] {display_path}[dim]{lock}[/dim]")
             remaining = len(self._spec_endpoints) - max_show
             if remaining > 0:
-                parts.append(f"  [dim]...{remaining} more[/dim]")
+                parts.append(f"  [dim]+{remaining} more[/dim]")
 
-        # Schemas
+        # Schemas — inline comma-separated list instead of one-per-line
         if self._spec_schema_names or self._spec_unresolved_schemas:
-            parts.append("")
             resolved_n = len(self._spec_schema_names)
             unresolved_n = len(self._spec_unresolved_schemas)
+            parts.append("")
             label = f"[dim]Schemas[/dim] [green]{resolved_n}[/green]"
             if unresolved_n:
                 label += f" [red]+{unresolved_n} unresolved[/red]"
             parts.append(label)
-            max_show = 6
-            for sn in self._spec_schema_names[:max_show]:
-                parts.append(f"  [green]✓[/green] {sn}")
-            remaining = len(self._spec_schema_names) - max_show
-            if remaining > 0:
-                parts.append(f"  [dim]...{remaining} more[/dim]")
-            for sn in self._spec_unresolved_schemas[:3]:
-                parts.append(f"  [red]✗[/red] [dim]{sn}[/dim]")
+            if self._spec_schema_names:
+                names = ", ".join(self._spec_schema_names[:12])
+                if len(self._spec_schema_names) > 12:
+                    names += f", [dim]+{len(self._spec_schema_names) - 12} more[/dim]"
+                parts.append(f"  [green]{names}[/green]")
+            if self._spec_unresolved_schemas:
+                unames = ", ".join(self._spec_unresolved_schemas[:4])
+                parts.append(f"  [red]✗ {unames}[/red]")
 
-        # Issues line (compact, only if there are problems)
+        # Issues — compact, only when problems exist
         issues: list[str] = []
         if self._failed_routes:
             issues.append(f"[red]{self._failed_routes} route fail(s)[/red]")
