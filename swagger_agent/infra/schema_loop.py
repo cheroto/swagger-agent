@@ -41,6 +41,7 @@ from rich.table import Table
 from swagger_agent.config import LLMConfig
 from swagger_agent.infra.resolve import (
     build_ctags_index,
+    resolve_from_import_path,
     resolve_from_ctags,
     resolve_by_grep,
     scan_refs_in_schemas,
@@ -127,10 +128,12 @@ def run_schema_loop(
             if schema_name in all_schemas:
                 continue
 
-            # Resolve via ctags, fall back to grep
-            file_path = resolve_from_ctags(schema_name, import_source, ctags_index)
+            # Three-tier resolution: import path → ctags → grep
+            file_path = resolve_from_import_path(import_source, project_root)
             if file_path is None:
-                file_path = resolve_by_grep(schema_name, project_root)
+                file_path = resolve_from_ctags(schema_name, import_source, ctags_index)
+            if file_path is None:
+                file_path = resolve_by_grep(schema_name, project_root, import_source)
 
             if file_path is None:
                 console.print(f"  [red]Could not resolve[/red] {schema_name}"

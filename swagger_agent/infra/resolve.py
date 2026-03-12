@@ -1,8 +1,9 @@
-"""Ref resolver using universal-ctags for language-agnostic type→file mapping.
+"""Ref resolver — three-tier language-agnostic type→file mapping.
 
-Replaces per-language import resolution with a single ctags index that supports
-100+ languages out of the box. Falls back to grep for edge cases ctags misses
-(TypedDict, Mongoose schemas, type aliases via assignment).
+Resolution order:
+  1. Import-path file lookup — parse import_source, find file on disk directly.
+  2. ctags index — universal-ctags for class/struct/interface definitions.
+  3. grep fallback — pattern match for edge cases (TypedDict, Mongoose, aliases).
 """
 
 from __future__ import annotations
@@ -37,6 +38,17 @@ _EXCLUDE_DIRS = [
 ]
 
 _EXCLUDE_PATTERNS = ["*.min.js", "*.lock"]
+
+# Common source extensions for file-path resolution (order = priority for ties)
+_SOURCE_EXTENSIONS = [
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cs",
+    ".go", ".rs", ".php", ".rb", ".kt", ".scala", ".swift",
+]
+
+# Patterns that indicate a line is an import/require, not a definition
+_IMPORT_LINE_RE = re.compile(
+    r"\b(?:require\s*\(|import\s+|from\s+\S+\s+import)\b"
+)
 
 
 def _find_ctags_binary() -> str:
@@ -131,14 +143,50 @@ def _extract_path_fragment(import_source: str) -> str | None:
     m = re.search(r"""(?:from\s+['"]|require\s*\(\s*['"])([^'"]+)['"]""", import_source)
     if m:
         frag = m.group(1)
-        # Strip leading ./ or ../
-        frag = re.sub(r"^\.{1,2}/", "", frag)
+        # Strip all leading ./ and ../ sequences
+        frag = re.sub(r"^(?:\.\./|\./)+", "", frag)
         return frag
 
     # Java: import a.b.c.X;
     m = re.match(r"import\s+(static\s+)?([\w.]+)\s*;?", import_source)
     if m:
         return m.group(2).replace(".", "/")
+
+    return None
+
+
+def resolve_from_import_path(
+    import_source: str | None,
+    project_root: Path,
+) -> Path | None:
+    """Resolve a type to a file by matching the import path against the filesystem.
+
+    Extracts a path fragment from the import statement and searches for a
+    matching file on disk. This is deterministic and language-agnostic.
+    """
+    if not import_source:
+        return None
+
+    fragment = _extract_path_fragment(import_source)
+    if not fragment:
+        return None
+
+    # Try direct path match with common extensions
+    for ext in _SOURCE_EXTENSIONS:
+        candidate = project_root / (fragment + ext)
+        if candidate.is_file():
+            return candidate.resolve()
+
+    # Fragment may be missing a leading directory (e.g. "app/models" when the
+    # actual path is "src/app/models.py"). Glob for it.
+    pattern = f"**/{fragment}"
+    for ext in _SOURCE_EXTENSIONS:
+        matches = list(project_root.glob(pattern + ext))
+        if len(matches) == 1:
+            return matches[0].resolve()
+        if len(matches) > 1:
+            # Multiple matches — prefer shortest path (most direct match)
+            return min(matches, key=lambda p: len(p.parts)).resolve()
 
     return None
 
@@ -174,11 +222,16 @@ def resolve_from_ctags(
     return entries[0].path
 
 
-def resolve_by_grep(name: str, project_root: Path) -> Path | None:
+def resolve_by_grep(
+    name: str,
+    project_root: Path,
+    import_source: str | None = None,
+) -> Path | None:
     """Fallback resolver using grep for ctags misses.
 
     Catches TypedDict function-call style, Mongoose schemas, type aliases
-    defined via assignment, etc.
+    defined via assignment, etc. Filters out import/require lines and uses
+    import_source path fragment for disambiguation when multiple matches exist.
     """
     pattern = rf"(class|interface|type|struct|enum)\s+{re.escape(name)}\b|{re.escape(name)}\s*="
 
@@ -190,8 +243,9 @@ def resolve_by_grep(name: str, project_root: Path) -> Path | None:
     for d in _EXCLUDE_DIRS:
         exclude_args.append(f"--exclude-dir={d}")
 
+    # Use -n (line numbers) to inspect matching lines, not just file names
     cmd = [
-        "grep", "-rn", "-l", "-E", pattern,
+        "grep", "-rn", "-E", pattern,
         *include_args, *exclude_args,
         str(project_root),
     ]
@@ -203,12 +257,43 @@ def resolve_by_grep(name: str, project_root: Path) -> Path | None:
     except (subprocess.TimeoutExpired, OSError):
         return None
 
+    # Collect files that have real definitions (not import/require lines)
+    candidate_files: list[Path] = []
+    seen: set[str] = set()
     for line in result.stdout.splitlines():
         line = line.strip()
-        if line:
-            return Path(line).resolve()
+        if not line:
+            continue
+        # Format: /path/to/file.js:42:matching line content
+        parts = line.split(":", 2)
+        if len(parts) < 3:
+            continue
+        file_path = parts[0]
+        match_content = parts[2]
 
-    return None
+        # Skip lines that are imports/requires, not definitions
+        if _IMPORT_LINE_RE.search(match_content):
+            continue
+
+        if file_path not in seen:
+            seen.add(file_path)
+            candidate_files.append(Path(file_path).resolve())
+
+    if not candidate_files:
+        return None
+
+    if len(candidate_files) == 1:
+        return candidate_files[0]
+
+    # Disambiguate with import_source path fragment
+    if import_source:
+        fragment = _extract_path_fragment(import_source)
+        if fragment:
+            for f in candidate_files:
+                if fragment in str(f):
+                    return f
+
+    return candidate_files[0]
 
 
 def scan_refs_in_schemas(schemas: dict[str, dict]) -> set[str]:
