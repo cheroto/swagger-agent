@@ -16,22 +16,48 @@ from swagger_agent.pipeline import run_pipeline
 
 
 def _print_completeness(completeness, console: Console) -> None:
-    """Print the completeness checklist as a table."""
-    table = Table(title="Completeness Checklist", expand=True)
-    table.add_column("Check", min_width=25)
-    table.add_column("Status", width=10, justify="center")
+    """Print the completeness checklist as a styled table.
 
-    checks = completeness.model_dump()
-    for check, value in checks.items():
-        label = check.replace("_", " ").title()
+    Uses contextual severity (critical / warning / info) instead of
+    blanket PASS/FAIL, since not every unchecked item is an error.
+    """
+    # (check_key, label, severity when False)
+    # "critical" = red, "warning" = yellow, "info" = dim
+    CHECKS = [
+        ("has_endpoints",        "Endpoints discovered",     "critical"),
+        ("has_security_schemes", "Security schemes defined", "warning"),
+        ("endpoints_have_auth",  "Endpoints have auth",      "warning"),
+        ("has_error_responses",  "Error responses (4xx)",     "info"),
+        ("has_request_bodies",   "Request bodies",            "info"),
+        ("has_schemas",          "Schemas extracted",         "warning"),
+        ("no_unresolved_refs",   "All $refs resolved",       "warning"),
+        ("has_servers",          "Server URLs",               "info"),
+        ("route_coverage",       "Route coverage",            None),
+    ]
+
+    data = completeness.model_dump()
+
+    table = Table(title="Spec Completeness", expand=True)
+    table.add_column("Check", min_width=28)
+    table.add_column("Result", width=12, justify="center")
+
+    for key, label, severity in CHECKS:
+        value = data[key]
+
         if isinstance(value, float):
             pct = f"{value:.0%}"
-            style = "green" if value >= 1.0 else "yellow" if value > 0 else "red"
-            table.add_row(label, f"[{style}]{pct}[/{style}]")
+            if value >= 1.0:
+                table.add_row(label, f"[green]{pct}[/green]")
+            elif value > 0:
+                table.add_row(label, f"[yellow]{pct}[/yellow]")
+            else:
+                table.add_row(label, f"[red]{pct}[/red]")
         elif value:
-            table.add_row(label, "[green]PASS[/green]")
+            table.add_row(label, "[green]  ✓[/green]")
         else:
-            table.add_row(label, "[red]FAIL[/red]")
+            icon_style = {"critical": "red", "warning": "yellow", "info": "dim"}.get(severity, "dim")
+            icon = {"critical": "  ✗", "warning": "  —", "info": "  —"}.get(severity, "  —")
+            table.add_row(f"[{icon_style}]{label}[/{icon_style}]", f"[{icon_style}]{icon}[/{icon_style}]")
 
     console.print(table)
 
@@ -45,6 +71,7 @@ def main() -> None:
     parser.add_argument("-o", "--output", metavar="PATH", help="Write YAML to file instead of stdout")
     parser.add_argument("--dump-json", metavar="PATH", help="Save full pipeline result as JSON")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
+    parser.add_argument("--no-dashboard", action="store_true", help="Disable live dashboard")
     args = parser.parse_args()
 
     # Validate target
@@ -59,10 +86,24 @@ def main() -> None:
     console.print(f"[dim]Target: {os.path.abspath(args.target_dir)}[/dim]")
     console.print()
 
-    # Run the pipeline
-    result = run_pipeline(args.target_dir, config=config, console=console)
+    # Use live dashboard when stderr is a TTY (unless --no-dashboard)
+    use_dashboard = sys.stderr.isatty() and not args.no_dashboard
+    dashboard = None
 
-    # Print completeness table
+    if use_dashboard:
+        from swagger_agent.dashboard import PipelineDashboard
+        dashboard = PipelineDashboard(console=console)
+        dashboard.start()
+
+    try:
+        result = run_pipeline(
+            args.target_dir, config=config, console=console, dashboard=dashboard,
+        )
+    finally:
+        if dashboard:
+            dashboard.stop()
+
+    # Print completeness table (after dashboard stops)
     console.print()
     _print_completeness(result.completeness, console)
     console.print()

@@ -45,6 +45,7 @@ def run_pipeline(
     target_dir: str,
     config: LLMConfig | None = None,
     console: Console | None = None,
+    dashboard: object | None = None,
 ) -> PipelineResult:
     """Run the full pipeline: Scout → Route Extraction → Schema Loop → Assembly.
 
@@ -52,6 +53,8 @@ def run_pipeline(
         target_dir: Path to the target project directory.
         config: LLM configuration. Uses defaults if None.
         console: Rich console for output (defaults to stderr).
+        dashboard: Optional PipelineDashboard for live display. When provided,
+            console output is suppressed in favor of dashboard events.
 
     Returns:
         PipelineResult with the assembled spec and all intermediate artifacts.
@@ -60,36 +63,56 @@ def run_pipeline(
     config = config or LLMConfig()
     result = PipelineResult()
     target_path = Path(target_dir).resolve()
+    db = dashboard  # shorthand
 
     # ── Phase 1: Scout ──
-    console.print(Rule(" Phase 1: Scout ", style="bold blue"))
+    if db:
+        db.phase_start(1, "Scout")
+    else:
+        console.print(Rule(" Phase 1: Scout ", style="bold blue"))
     t0 = time.monotonic()
 
-    manifest, scout_record = run_scout(str(target_path), config=config)
+    manifest, scout_record = run_scout(
+        str(target_path), config=config,
+        event_handler=db if db else None,
+    )
     result.manifest = manifest
     result.timings["scout"] = (time.monotonic() - t0) * 1000
 
-    console.print(
-        f"[bold]Scout complete:[/bold] {manifest.framework} / {manifest.language}, "
-        f"{len(manifest.route_files)} route file(s), "
+    scout_summary = (
+        f"{manifest.framework}/{manifest.language}, "
+        f"{len(manifest.route_files)} route(s), "
         f"{len(manifest.servers)} server(s)"
     )
+    if db:
+        db.phase_complete(1, scout_summary)
+    else:
+        console.print(f"[bold]Scout complete:[/bold] {scout_summary}")
 
     if not manifest.route_files:
-        console.print("[yellow]No route files found. Returning empty spec.[/yellow]")
+        if not db:
+            console.print("[yellow]No route files found. Returning empty spec.[/yellow]")
         assembly = assemble_spec(manifest, [], {})
         result.spec = assembly.spec
         result.yaml_str = assembly.yaml_str
         return result
 
     # ── Phase 2: Route Extraction ──
-    console.print(Rule(" Phase 2: Route Extraction ", style="bold blue"))
+    if db:
+        db.phase_start(2, "Route Extraction")
+    else:
+        console.print(Rule(" Phase 2: Route Extraction ", style="bold blue"))
     t0 = time.monotonic()
     descriptors: list[EndpointDescriptor] = []
+    total_route_files = len(manifest.route_files)
 
-    for route_file in manifest.route_files:
+    for idx, route_file in enumerate(manifest.route_files, 1):
         abs_path = str(target_path / route_file)
-        console.print(f"  Extracting: [bold]{route_file}[/bold]")
+
+        if db:
+            db.route_start(route_file, idx, total_route_files)
+        else:
+            console.print(f"  Extracting: [bold]{route_file}[/bold]")
 
         context = RouteExtractorContext(
             framework=manifest.framework,
@@ -100,28 +123,40 @@ def run_pipeline(
         try:
             descriptor, record = run_route_extractor(abs_path, context, config=config)
             descriptors.append(descriptor)
-            console.print(
-                f"    {record.endpoint_count} endpoint(s) in {record.duration_ms:.0f}ms"
-            )
+            if db:
+                db.route_complete(route_file, record.endpoint_count, record.duration_ms)
+                db.route_endpoints_discovered(descriptor)
+            else:
+                console.print(
+                    f"    {record.endpoint_count} endpoint(s) in {record.duration_ms:.0f}ms"
+                )
         except Exception as e:
-            console.print(f"    [red]Failed:[/red] {e}")
+            if db:
+                db.route_failed(route_file, str(e))
+            else:
+                console.print(f"    [red]Failed:[/red] {e}")
             result.failed_routes.append((route_file, str(e)))
 
     result.descriptors = descriptors
     result.timings["route_extraction"] = (time.monotonic() - t0) * 1000
 
     total_endpoints = sum(len(d.endpoints) for d in descriptors)
-    console.print(
-        f"[bold]Routes complete:[/bold] {len(descriptors)}/{len(manifest.route_files)} files, "
+    routes_summary = (
+        f"{len(descriptors)}/{total_route_files} files, "
         f"{total_endpoints} endpoint(s)"
     )
-    if result.failed_routes:
-        console.print(
-            f"[yellow]{len(result.failed_routes)} file(s) failed[/yellow]"
-        )
+    if db:
+        db.phase_complete(2, routes_summary)
+    else:
+        console.print(f"[bold]Routes complete:[/bold] {routes_summary}")
+        if result.failed_routes:
+            console.print(f"[yellow]{len(result.failed_routes)} file(s) failed[/yellow]")
 
     # ── Phase 3: Schema Resolution ──
-    console.print(Rule(" Phase 3: Schema Resolution ", style="bold blue"))
+    if db:
+        db.phase_start(3, "Schema Resolution")
+    else:
+        console.print(Rule(" Phase 3: Schema Resolution ", style="bold blue"))
     t0 = time.monotonic()
 
     all_ref_hints: list[dict] = []
@@ -137,19 +172,22 @@ def run_pipeline(
             deduped_hints.append(hint)
 
     if deduped_hints:
-        console.print(
-            f"  {len(deduped_hints)} unique ref(s): "
-            f"{', '.join(h['ref_hint'] for h in deduped_hints)}"
-        )
+        if not db:
+            console.print(
+                f"  {len(deduped_hints)} unique ref(s): "
+                f"{', '.join(h['ref_hint'] for h in deduped_hints)}"
+            )
         schemas = run_schema_loop(
             ref_hints=deduped_hints,
             framework=manifest.framework,
             project_root=target_path,
             config=config,
             console=console,
+            event_callback=db.schema_event if db else None,
         )
     else:
-        console.print("[dim]No ref_hints to resolve.[/dim]")
+        if not db:
+            console.print("[dim]No ref_hints to resolve.[/dim]")
         schemas = {}
 
     result.schemas = schemas
@@ -157,12 +195,17 @@ def run_pipeline(
 
     resolved = sum(1 for s in schemas.values() if not s.get("x-unresolved"))
     unresolved = sum(1 for s in schemas.values() if s.get("x-unresolved"))
-    console.print(
-        f"[bold]Schemas complete:[/bold] {resolved} resolved, {unresolved} unresolved"
-    )
+    schemas_summary = f"{resolved} resolved, {unresolved} unresolved"
+    if db:
+        db.phase_complete(3, schemas_summary)
+    else:
+        console.print(f"[bold]Schemas complete:[/bold] {schemas_summary}")
 
     # ── Phase 4: Assembly ──
-    console.print(Rule(" Phase 4: Assembly ", style="bold blue"))
+    if db:
+        db.phase_start(4, "Assembly")
+    else:
+        console.print(Rule(" Phase 4: Assembly ", style="bold blue"))
     t0 = time.monotonic()
 
     assembly = assemble_spec(manifest, descriptors, schemas)
@@ -172,31 +215,52 @@ def run_pipeline(
 
     path_count = len(result.spec.get("paths", {}))
     schema_count = len(result.spec.get("components", {}).get("schemas", {}))
-    console.print(f"[bold]Assembled:[/bold] {path_count} path(s), {schema_count} schema(s)")
+    assembly_summary = f"{path_count} path(s), {schema_count} schema(s)"
+    if db:
+        db.assembly_complete(path_count, schema_count)
+        db.phase_complete(4, assembly_summary)
+    else:
+        console.print(f"[bold]Assembled:[/bold] {assembly_summary}")
 
     # ── Phase 5: Validation ──
-    console.print(Rule(" Phase 5: Validation ", style="bold blue"))
+    if db:
+        db.phase_start(5, "Validation")
+    else:
+        console.print(Rule(" Phase 5: Validation ", style="bold blue"))
     t0 = time.monotonic()
 
     result.validation = validate_spec(result.spec)
     result.completeness = check_completeness(result.spec, manifest, descriptors)
     result.timings["validation"] = (time.monotonic() - t0) * 1000
 
-    if result.validation.errors:
-        console.print(f"[red]Validation errors: {len(result.validation.errors)}[/red]")
-        for err in result.validation.errors:
-            console.print(f"  [red]{err}[/red]")
+    err_count = len(result.validation.errors)
+    warn_count = len(result.validation.warnings)
+    if db:
+        db.validation_complete(err_count, warn_count)
+        if err_count:
+            validation_summary = f"{err_count} error(s), {warn_count} warning(s)"
+        elif warn_count:
+            validation_summary = f"Clean, {warn_count} warning(s)"
+        else:
+            validation_summary = "Clean"
+        db.phase_complete(5, validation_summary)
     else:
-        console.print("[green]No validation errors[/green]")
+        if result.validation.errors:
+            console.print(f"[red]Validation errors: {err_count}[/red]")
+            for err in result.validation.errors:
+                console.print(f"  [red]{err}[/red]")
+        else:
+            console.print("[green]No validation errors[/green]")
 
-    if result.validation.warnings:
-        console.print(f"[yellow]Warnings: {len(result.validation.warnings)}[/yellow]")
-        for warn in result.validation.warnings:
-            console.print(f"  [yellow]{warn}[/yellow]")
+        if result.validation.warnings:
+            console.print(f"[yellow]Warnings: {warn_count}[/yellow]")
+            for warn in result.validation.warnings:
+                console.print(f"  [yellow]{warn}[/yellow]")
 
     # Total time
     total_ms = sum(result.timings.values())
     result.timings["total"] = total_ms
-    console.print(f"\n[dim]Total pipeline time: {total_ms / 1000:.1f}s[/dim]")
+    if not db:
+        console.print(f"\n[dim]Total pipeline time: {total_ms / 1000:.1f}s[/dim]")
 
     return result

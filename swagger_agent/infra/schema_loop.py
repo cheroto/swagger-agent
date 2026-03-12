@@ -81,6 +81,7 @@ def run_schema_loop(
     config: LLMConfig | None = None,
     console: Console | None = None,
     max_depth: int = 10,
+    event_callback: object | None = None,
 ) -> dict[str, dict]:
     """Run the schema extraction loop until all $refs are resolved.
 
@@ -89,19 +90,27 @@ def run_schema_loop(
         framework: Framework name.
         project_root: Root of the target project.
         config: LLM config.
-        console: Rich console for output.
+        console: Rich console for output (suppressed when event_callback is set).
         max_depth: Max recursion depth (safety net).
+        event_callback: Optional callable(event, **kwargs) for structured events.
+            When provided, console output for key events is suppressed.
 
     Returns:
         Dict of all collected schemas: {"SchemaName": {JSON Schema}, ...}
     """
     console = console or Console(stderr=True)
     config = config or LLMConfig()
+    _emit = event_callback or (lambda event, **kw: None)
+    quiet = event_callback is not None
 
     # Build ctags index once before the loop
-    console.print("[dim]Building ctags index...[/dim]")
+    if not quiet:
+        console.print("[dim]Building ctags index...[/dim]")
     ctags_index = build_ctags_index(project_root)
-    console.print(f"[dim]Indexed {sum(len(v) for v in ctags_index.values())} type definitions[/dim]")
+    type_count = sum(len(v) for v in ctags_index.values())
+    if not quiet:
+        console.print(f"[dim]Indexed {type_count} type definitions[/dim]")
+    _emit("ctags_built", count=type_count)
 
     all_schemas: dict[str, dict] = {}      # Accumulated schemas
     extracted_files: set[str] = set()       # Files already processed
@@ -118,7 +127,9 @@ def run_schema_loop(
     while queue and depth < max_depth:
         depth += 1
         batch_size = len(queue)
-        console.print(Rule(f" Resolution Round {depth} ({batch_size} pending) ", style="bold yellow"))
+        if not quiet:
+            console.print(Rule(f" Resolution Round {depth} ({batch_size} pending) ", style="bold yellow"))
+        _emit("round_start", round=depth, pending=batch_size)
 
         # Process all items in the current batch
         round_new_schemas: dict[str, dict] = {}
@@ -136,8 +147,10 @@ def run_schema_loop(
                 file_path = resolve_by_grep(schema_name, project_root, import_source)
 
             if file_path is None:
-                console.print(f"  [red]Could not resolve[/red] {schema_name}"
-                              f" (import: {import_source or 'none'})")
+                if not quiet:
+                    console.print(f"  [red]Could not resolve[/red] {schema_name}"
+                                  f" (import: {import_source or 'none'})")
+                _emit("resolving", name=schema_name, file=None)
                 all_schemas[schema_name] = {
                     "type": "object",
                     "description": "Schema could not be resolved from source code.",
@@ -147,10 +160,14 @@ def run_schema_loop(
 
             file_key = str(file_path)
             if file_key in extracted_files:
-                console.print(f"  [dim]Already extracted {file_path.name}, skipping[/dim]")
+                if not quiet:
+                    console.print(f"  [dim]Already extracted {file_path.name}, skipping[/dim]")
+                _emit("already_extracted", file=file_path.name)
                 continue
 
-            console.print(f"  [bold]{schema_name}[/bold] → {file_path.relative_to(project_root)}")
+            if not quiet:
+                console.print(f"  [bold]{schema_name}[/bold] → {file_path.relative_to(project_root)}")
+            _emit("resolving", name=schema_name, file=str(file_path))
 
             # Build known_schemas context: schemas whose names appear in this file
             file_text = file_path.read_text(encoding="utf-8", errors="replace")
@@ -170,14 +187,20 @@ def run_schema_loop(
                 descriptor, record = run_schema_extractor(
                     str(file_path), context, config=config,
                 )
-                console.print(
-                    f"    Extracted {record.schema_count} schema(s) in "
-                    f"{record.duration_ms:.0f}ms"
-                )
+                if not quiet:
+                    console.print(
+                        f"    Extracted {record.schema_count} schema(s) in "
+                        f"{record.duration_ms:.0f}ms"
+                    )
+                _emit("extracted", file=str(file_path), count=record.schema_count,
+                      duration_ms=record.duration_ms,
+                      schema_names=list(descriptor.schemas.keys()))
                 round_new_schemas.update(descriptor.schemas)
                 extracted_files.add(file_key)
             except Exception as e:
-                console.print(f"    [red]Extraction failed:[/red] {e}")
+                if not quiet:
+                    console.print(f"    [red]Extraction failed:[/red] {e}")
+                _emit("extract_failed", name=schema_name, error=str(e))
                 all_schemas[schema_name] = {
                     "type": "object",
                     "description": f"Schema extraction failed: {e}",
@@ -192,17 +215,22 @@ def run_schema_loop(
         unresolved = new_refs - set(all_schemas.keys())
 
         if unresolved:
-            console.print(
-                f"\n  [cyan]New $refs discovered:[/cyan] {', '.join(sorted(unresolved))}"
-            )
+            if not quiet:
+                console.print(
+                    f"\n  [cyan]New $refs discovered:[/cyan] {', '.join(sorted(unresolved))}"
+                )
+            _emit("new_refs", refs=list(unresolved))
             for ref_name in unresolved:
                 queue.append((ref_name, None))
         else:
-            console.print(f"\n  [green]No new unresolved $refs[/green]")
+            if not quiet:
+                console.print(f"\n  [green]No new unresolved $refs[/green]")
+            _emit("no_new_refs")
 
     if queue:
-        console.print(f"\n[yellow]Stopped after {max_depth} rounds. "
-                       f"{len(queue)} refs still pending.[/yellow]")
+        if not quiet:
+            console.print(f"\n[yellow]Stopped after {max_depth} rounds. "
+                           f"{len(queue)} refs still pending.[/yellow]")
         for name, _import_source in queue:
             if name not in all_schemas:
                 all_schemas[name] = {
