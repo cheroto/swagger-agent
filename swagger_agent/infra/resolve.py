@@ -16,6 +16,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+from swagger_agent.infra.ctags_patterns import CUSTOM_CTAGS_PATTERNS
+
 
 @dataclass
 class CtagsEntry:
@@ -30,8 +32,6 @@ _RELEVANT_KINDS = frozenset({
     "class", "interface", "struct", "enum", "type", "alias",
     "record", "trait", "model",
 })
-
-from swagger_agent.infra.ctags_patterns import CUSTOM_CTAGS_PATTERNS
 
 # Directories to exclude from ctags and grep
 _EXCLUDE_DIRS = [
