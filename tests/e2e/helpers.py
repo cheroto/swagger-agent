@@ -301,3 +301,278 @@ def assert_schemas_match(
                     f"[{golden.repo_id}] Schema '{expected.name}' missing required "
                     f"field '{req_name}', got required: {required}"
                 )
+
+
+# --- Scout golden data ---
+
+
+@dataclass
+class ScoutGolden:
+    """Golden data for a Scout agent test case."""
+
+    repo_id: str
+    repo_dir: str  # Relative to REPOS_ROOT
+    framework: str  # Expected framework name (case-insensitive match)
+    language: str  # Expected language name (case-insensitive match)
+    route_files: list[str] = field(default_factory=list)  # Expected route files (relative to repo root)
+    min_route_files: int = 1  # Minimum number of route files to find
+    servers: list[str] = field(default_factory=list)  # Expected server URL substrings
+    base_path: str | None = None  # Expected base_path, None=don't check
+
+
+def assert_scout_match(
+    manifest: "DiscoveryManifest",
+    golden: ScoutGolden,
+) -> None:
+    """Assert that the Scout's discovery manifest matches golden expectations.
+
+    Uses flexible matching:
+    - Framework/language are case-insensitive substring matches
+    - Route files check that expected files are found (allows extras)
+    - Servers check that expected substrings appear in at least one server URL
+    """
+    from swagger_agent.models import DiscoveryManifest
+
+    # Framework (case-insensitive substring)
+    assert golden.framework.lower() in manifest.framework.lower(), (
+        f"[{golden.repo_id}] Expected framework containing '{golden.framework}', "
+        f"got '{manifest.framework}'"
+    )
+
+    # Language (case-insensitive substring)
+    assert golden.language.lower() in manifest.language.lower(), (
+        f"[{golden.repo_id}] Expected language containing '{golden.language}', "
+        f"got '{manifest.language}'"
+    )
+
+    # Route files — minimum count
+    assert len(manifest.route_files) >= golden.min_route_files, (
+        f"[{golden.repo_id}] Expected at least {golden.min_route_files} route files, "
+        f"got {len(manifest.route_files)}: {manifest.route_files}"
+    )
+
+    # Route files — each expected file must be found (normalize for comparison)
+    manifest_files_normalized = [_normalize_route_path(f) for f in manifest.route_files]
+    for expected_file in golden.route_files:
+        expected_norm = _normalize_route_path(expected_file)
+        found = any(expected_norm in mf or mf.endswith(expected_norm) for mf in manifest_files_normalized)
+        assert found, (
+            f"[{golden.repo_id}] Expected route file '{expected_file}' not found in "
+            f"manifest. Got: {manifest.route_files}"
+        )
+
+    # Servers — each expected substring must appear in at least one server URL
+    for expected_url in golden.servers:
+        found = any(expected_url in s for s in manifest.servers)
+        assert found, (
+            f"[{golden.repo_id}] Expected server URL containing '{expected_url}' "
+            f"not found. Got: {manifest.servers}"
+        )
+
+    # Base path
+    if golden.base_path is not None:
+        assert manifest.base_path == golden.base_path, (
+            f"[{golden.repo_id}] Expected base_path='{golden.base_path}', "
+            f"got '{manifest.base_path}'"
+        )
+
+
+def _normalize_route_path(path: str) -> str:
+    """Normalize a route file path for comparison.
+
+    Strips leading ./ and trailing whitespace, normalizes separators.
+    Handles both absolute and relative paths by extracting the relative portion.
+    """
+    import os
+    path = path.strip().replace("\\", "/")
+    # Strip leading ./
+    while path.startswith("./"):
+        path = path[2:]
+    # If absolute, try to extract from repo root onwards
+    # (Scout may return absolute paths)
+    return path
+
+
+# --- Pipeline golden data ---
+
+
+@dataclass
+class ExpectedPipelineEndpoint:
+    """Golden expectation for an endpoint in the assembled spec."""
+
+    method: str
+    path: str  # OpenAPI-style path with {param}
+    has_auth: bool | None = None
+    has_request_body: bool | None = None
+    param_names: list[str] = field(default_factory=list)
+    min_responses: int = 1
+    response_schema_ref: str | None = None  # Expected $ref schema name (e.g. "Project")
+
+
+@dataclass
+class PipelineGolden:
+    """Golden data for a full pipeline test case."""
+
+    repo_id: str
+    repo_dir: str
+    min_endpoints: int
+    min_schemas: int
+    endpoints: list[ExpectedPipelineEndpoint] = field(default_factory=list)
+    expected_schemas: list[ExpectedSchema] = field(default_factory=list)
+    expected_security_schemes: list[str] = field(default_factory=list)
+    expected_servers: list[str] = field(default_factory=list)
+    # Completeness checks that must be True
+    completeness_must_pass: list[str] = field(default_factory=list)
+    max_validation_errors: int = 0
+    max_unresolved_schemas: int = 0
+
+
+def assert_pipeline_match(
+    spec: dict,
+    schemas: dict[str, dict],
+    golden: PipelineGolden,
+    validation_errors: list[str] | None = None,
+) -> None:
+    """Assert that the assembled spec matches pipeline golden expectations."""
+    paths = spec.get("paths", {})
+    spec_schemas = spec.get("components", {}).get("schemas", {})
+    security_schemes = spec.get("components", {}).get("securitySchemes", {})
+    servers = spec.get("servers", [])
+
+    # Total endpoint count
+    total_ops = sum(
+        1 for methods in paths.values()
+        for m, op in methods.items()
+        if isinstance(op, dict)
+    )
+    assert total_ops >= golden.min_endpoints, (
+        f"[{golden.repo_id}] Expected at least {golden.min_endpoints} endpoints, "
+        f"got {total_ops}"
+    )
+
+    # Schema count
+    resolved_schemas = {
+        k: v for k, v in spec_schemas.items() if not v.get("x-unresolved")
+    }
+    assert len(resolved_schemas) >= golden.min_schemas, (
+        f"[{golden.repo_id}] Expected at least {golden.min_schemas} resolved schemas, "
+        f"got {len(resolved_schemas)}: {list(resolved_schemas.keys())}"
+    )
+
+    # Unresolved schema count
+    unresolved_count = sum(1 for v in spec_schemas.values() if v.get("x-unresolved"))
+    assert unresolved_count <= golden.max_unresolved_schemas, (
+        f"[{golden.repo_id}] Expected at most {golden.max_unresolved_schemas} unresolved schemas, "
+        f"got {unresolved_count}: "
+        f"{[k for k, v in spec_schemas.items() if v.get('x-unresolved')]}"
+    )
+
+    # Check specific endpoints
+    for expected in golden.endpoints:
+        # Normalize expected path
+        norm_expected = normalize_path(expected.path)
+
+        # Find matching operation in spec
+        found_op = None
+        for path_key, methods in paths.items():
+            norm_path = normalize_path(path_key)
+            if norm_path == norm_expected:
+                method_key = expected.method.lower()
+                if method_key in methods:
+                    found_op = methods[method_key]
+                    break
+
+        assert found_op is not None, (
+            f"[{golden.repo_id}] Expected endpoint {expected.method} {expected.path} "
+            f"not found in spec. Got paths: {list(paths.keys())}"
+        )
+
+        # Check auth
+        if expected.has_auth is True:
+            sec = found_op.get("security")
+            assert sec is not None and sec != [], (
+                f"[{golden.repo_id}] {expected.method} {expected.path} "
+                f"should have auth, got security={sec}"
+            )
+        elif expected.has_auth is False:
+            sec = found_op.get("security")
+            assert sec is not None and (sec == [] or all(not s for s in sec)), (
+                f"[{golden.repo_id}] {expected.method} {expected.path} "
+                f"should be explicitly public (security: []), got security={sec}"
+            )
+
+        # Check request body
+        if expected.has_request_body is True:
+            assert "requestBody" in found_op, (
+                f"[{golden.repo_id}] {expected.method} {expected.path} "
+                f"should have requestBody"
+            )
+
+        # Check response schema ref
+        if expected.response_schema_ref:
+            resp_200 = found_op.get("responses", {}).get("200", {})
+            content = resp_200.get("content", {})
+            ref_found = False
+            for _ct, media in content.items():
+                schema = media.get("schema", {})
+                ref_val = schema.get("$ref", "")
+                items_ref = schema.get("items", {}).get("$ref", "") if schema.get("type") == "array" else ""
+                if expected.response_schema_ref in ref_val or expected.response_schema_ref in items_ref:
+                    ref_found = True
+            assert ref_found, (
+                f"[{golden.repo_id}] {expected.method} {expected.path} "
+                f"expected response $ref containing '{expected.response_schema_ref}', "
+                f"got responses: {found_op.get('responses', {}).get('200', {})}"
+            )
+
+    # Check expected schemas
+    for expected_schema in golden.expected_schemas:
+        assert expected_schema.name in spec_schemas, (
+            f"[{golden.repo_id}] Expected schema '{expected_schema.name}' not in spec. "
+            f"Got: {list(spec_schemas.keys())}"
+        )
+        schema = spec_schemas[expected_schema.name]
+        if not schema.get("x-unresolved"):
+            props = schema.get("properties", {})
+            for prop_name in expected_schema.expected_properties:
+                assert prop_name in props, (
+                    f"[{golden.repo_id}] Schema '{expected_schema.name}' missing "
+                    f"property '{prop_name}', got: {list(props.keys())}"
+                )
+
+    # Check security schemes
+    for scheme_name in golden.expected_security_schemes:
+        assert scheme_name in security_schemes, (
+            f"[{golden.repo_id}] Expected security scheme '{scheme_name}' not found. "
+            f"Got: {list(security_schemes.keys())}"
+        )
+
+    # Check servers
+    server_urls = [s.get("url", "") for s in servers]
+    for expected_url in golden.expected_servers:
+        assert any(expected_url in url for url in server_urls), (
+            f"[{golden.repo_id}] Expected server URL containing '{expected_url}' "
+            f"not found. Got: {server_urls}"
+        )
+
+    # Check $ref validity: no double-nested refs
+    import json
+    spec_json = json.dumps(spec)
+    assert "#/components/schemas/#" not in spec_json, (
+        f"[{golden.repo_id}] Double-nested $ref found in spec (e.g. "
+        f"'#/components/schemas/#/components/schemas/Foo')"
+    )
+
+    # Check path param format: no Express-style :param in paths
+    for path_key in paths.keys():
+        assert ":" not in path_key, (
+            f"[{golden.repo_id}] Path '{path_key}' uses Express-style :param "
+            f"instead of OpenAPI {{param}} format"
+        )
+
+    # Check validation errors
+    if validation_errors is not None:
+        assert len(validation_errors) <= golden.max_validation_errors, (
+            f"[{golden.repo_id}] Expected at most {golden.max_validation_errors} "
+            f"validation errors, got {len(validation_errors)}: {validation_errors}"
+        )
