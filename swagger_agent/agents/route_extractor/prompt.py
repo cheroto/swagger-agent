@@ -86,9 +86,12 @@ _PHASE2_OUTPUT_FORMAT = """\
 
 ## Request Body Detection
 
-- POST and PUT endpoints typically accept request bodies. If the route delegates to a controller action, assume a JSON request body exists even if the route file doesn't show the body schema explicitly.
+- Only include a request_body when you see explicit evidence of body consumption in the handler signature or code:
+  - A parameter with a body marker (e.g. [FromBody], @RequestBody, Pydantic model type, req.body usage)
+  - A parameter that is a complex/model type (not a path/query param, not CancellationToken, not primitive)
+- If the handler only takes path parameters, query parameters, or framework infrastructure parameters (CancellationToken, HttpContext, etc.) → set request_body: null (no body)
 - For bodies with no visible schema type, set `schema_ref: null` but still include the request_body with `content_type: "application/json"`.
-- PATCH endpoints also typically have request bodies.
+- PATCH endpoints follow the same rule: only include request_body if evidence of body consumption exists.
 
 ## RefHint Rules
 
@@ -193,10 +196,11 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str) -> str:
         sections.append(
             "No explicit per-endpoint auth markers were found, but there are indirect signals:\n"
             f"{analysis.auth_inference_notes}\n\n"
-            "Based on these signals, infer which endpoints likely require authentication. "
-            "Endpoints that access/modify user-specific data (e.g. GET /user, PUT /user, /me, /profile without ID) "
-            "likely require auth → set security: [\"BearerAuth\"]. "
-            "Public endpoints (login, register, listing resources by ID) → set security: []."
+            "Without explicit per-endpoint markers (decorators, attributes, middleware), "
+            "you cannot reliably determine which endpoints require auth. "
+            "Default to security: [] (public) for all endpoints in this file. "
+            "Only set security: [\"BearerAuth\"] if the handler code itself "
+            "explicitly checks credentials (reads a token, validates a claim, calls an auth service)."
         )
     else:
         sections.append("\n## Authentication\n")

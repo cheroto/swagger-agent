@@ -30,6 +30,7 @@ class CtagsEntry:
     path: Path
     line: int
     kind: str  # "class", "interface", "struct", "enum", etc.
+    scope: str | None = None  # parent scope from ctags (e.g. "Create", "Conduit.Features.Articles.Create")
 
 
 # Kinds that represent type definitions worth resolving
@@ -142,6 +143,7 @@ def build_ctags_index(project_root: Path) -> dict[str, list[CtagsEntry]]:
         abs_path = (project_root / path_str).resolve()
         index[name].append(CtagsEntry(
             name=name, path=abs_path, line=line_no, kind=kind,
+            scope=tag.get("scope"),
         ))
 
     return dict(index)
@@ -224,6 +226,25 @@ def resolve_from_ctags(
     scoring: files whose stem matches the type name are more likely to
     be the definition than files that merely reference the type.
     """
+    # Handle dotted names (e.g. "Create.Command" → leaf="Command", parent="Create")
+    if "." in name:
+        parent, leaf = name.rsplit(".", 1)
+        leaf_entries = ctags_index.get(leaf, [])
+        # Filter to entries whose scope ends with the parent class name
+        scoped = [e for e in leaf_entries if e.scope and e.scope.endswith(parent)]
+        if len(scoped) == 1:
+            return scoped[0].path
+        if len(scoped) > 1:
+            # Disambiguate with import_source
+            if import_source:
+                fragment = _extract_path_fragment(import_source)
+                if fragment:
+                    for entry in scoped:
+                        if fragment in str(entry.path):
+                            return entry.path
+            return scoped[0].path
+        # Fall through to try the full dotted name as-is
+
     entries = ctags_index.get(name)
     if not entries:
         return None
@@ -272,10 +293,15 @@ def resolve_by_grep(
     uses import_source path fragment for disambiguation when multiple
     matches exist.
     """
-    pattern = (
-        rf"(class|interface|type|struct|enum|record)\s+{re.escape(name)}\b"
-        rf"|{re.escape(name)}\s*="
-    )
+    if "." in name:
+        parent, leaf = name.rsplit(".", 1)
+        # Look for "class Command" inside a file that also has "class Create"
+        pattern = rf"(class|interface|type|struct|enum|record)\s+{re.escape(leaf)}\b"
+    else:
+        pattern = (
+            rf"(class|interface|type|struct|enum|record)\s+{re.escape(name)}\b"
+            rf"|{re.escape(name)}\s*="
+        )
 
     include_args = []
     for ext in _SOURCE_EXTENSIONS:
