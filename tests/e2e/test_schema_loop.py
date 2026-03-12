@@ -240,6 +240,87 @@ SCHEMA_GOLDEN: list[SchemaLoopGolden] = [
             ),
         ],
     ),
+    # -----------------------------------------------------------------------
+    # 6. aspnetcore-realworld — C# records and classes
+    # ASP.NET Core vertical-slice architecture with MediatR.
+    # Types live in the same namespace as controllers (no explicit using
+    # statement needed). Envelope types are simple records/classes wrapping
+    # domain objects. Tests that ctags-based resolution works for C#
+    # where import-path resolution cannot help (no Python/JS-style imports).
+    #
+    # ArticleEnvelope.cs: record ArticleEnvelope(Article Article)
+    # ArticlesEnvelope.cs: class ArticlesEnvelope { List<Article> Articles; int ArticlesCount; }
+    # TagsEnvelope.cs: class TagsEnvelope { List<string> Tags; }
+    # ProfileEnvelope.cs: record ProfileEnvelope(Profile Profile)
+    # User.cs: record UserEnvelope(User User) — note: envelope defined in same
+    #          file as the User class.
+    #
+    # All use class_to_file resolution — the Route Extractor should recognize
+    # these as same-namespace types with no explicit import.
+    # -----------------------------------------------------------------------
+    SchemaLoopGolden(
+        repo_id="aspnetcore-realworld",
+        repo_dir="aspnetcore-realworld",
+        framework="aspnetcore",
+        ref_hints=[
+            {
+                "ref_hint": "ArticleEnvelope",
+                "import_source": None,
+                "resolution": "class_to_file",
+            },
+            {
+                "ref_hint": "ArticlesEnvelope",
+                "import_source": None,
+                "resolution": "class_to_file",
+            },
+            {
+                "ref_hint": "TagsEnvelope",
+                "import_source": None,
+                "resolution": "class_to_file",
+            },
+            {
+                "ref_hint": "ProfileEnvelope",
+                "import_source": None,
+                "resolution": "class_to_file",
+            },
+            {
+                "ref_hint": "UserEnvelope",
+                "import_source": None,
+                "resolution": "class_to_file",
+            },
+        ],
+        min_schemas=3,
+        expected_schemas=[
+            ExpectedSchema(
+                name="ArticleEnvelope",
+                min_properties=1,
+                # Record with a single Article property
+                expected_properties=[],
+            ),
+            ExpectedSchema(
+                name="ArticlesEnvelope",
+                min_properties=1,
+                # Class with Articles list and ArticlesCount
+                expected_properties=[],
+            ),
+            ExpectedSchema(
+                name="TagsEnvelope",
+                min_properties=1,
+                # Class with Tags list (List<string>)
+                expected_properties=[],
+            ),
+            ExpectedSchema(
+                name="ProfileEnvelope",
+                min_properties=1,
+                expected_properties=[],
+            ),
+            ExpectedSchema(
+                name="UserEnvelope",
+                min_properties=1,
+                expected_properties=[],
+            ),
+        ],
+    ),
 ]
 
 

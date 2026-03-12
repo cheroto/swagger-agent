@@ -1,9 +1,14 @@
-"""Ref resolver — three-tier language-agnostic type→file mapping.
+"""Ref resolver — language-agnostic type→file mapping via ctags + grep.
 
 Resolution order:
-  1. Import-path file lookup — parse import_source, find file on disk directly.
-  2. ctags index — universal-ctags for class/struct/interface definitions.
-  3. grep fallback — pattern match for edge cases (TypedDict, Mongoose, aliases).
+  1. ctags index (primary) — universal-ctags indexes class/struct/interface/record
+     definitions across all languages. import_source is used only for
+     disambiguation when multiple matches exist for the same type name.
+  2. grep fallback — pattern match for edge cases ctags misses (TypedDict,
+     Mongoose schemas, type aliases defined via assignment, etc.).
+
+import_source is NEVER used as a standalone file resolver. It is only a
+disambiguation signal passed into tiers 1 and 2.
 """
 
 from __future__ import annotations
@@ -41,15 +46,24 @@ _EXCLUDE_DIRS = [
 
 _EXCLUDE_PATTERNS = ["*.min.js", "*.lock"]
 
-# Common source extensions for file-path resolution (order = priority for ties)
+# Common source extensions (order = priority for ties)
 _SOURCE_EXTENSIONS = [
     ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cs",
     ".go", ".rs", ".php", ".rb", ".kt", ".scala", ".swift",
 ]
 
-# Patterns that indicate a line is an import/require, not a definition
+# Language-agnostic pattern matching import/use/require lines (not definitions).
+# Used by grep fallback to filter out false positives.
 _IMPORT_LINE_RE = re.compile(
-    r"\b(?:require\s*\(|import\s+|from\s+\S+\s+import)\b"
+    r"\b(?:"
+    r"require\s*\("              # JS:     require(...)
+    r"|require_relative\s+"      # Ruby:   require_relative '...'
+    r"|import\s+"                # Python/Java/Go/TS/Kotlin: import ...
+    r"|from\s+\S+\s+import"      # Python: from x import y
+    r"|using\s+[\w.]+"           # C#:     using Namespace.Name
+    r"|use\s+[\w\\\\:]+"         # Rust:   use crate::mod  /  PHP: use App\Model
+    r"|include\s+"               # Ruby/C: include ...
+    r")\b"
 )
 
 
@@ -134,67 +148,66 @@ def build_ctags_index(project_root: Path) -> dict[str, list[CtagsEntry]]:
 
 
 def _extract_path_fragment(import_source: str) -> str | None:
-    """Extract a path-like fragment from an import statement for disambiguation.
+    """Extract a path-like fragment from an import statement.
 
-    Handles:
-      - Python: "from a.b.c import X" → "a/b/c"
-      - Java:   "import a.b.c.X;"     → "a/b/c/X"
-      - JS/TS:  "import { X } from './path/to/mod'" → "path/to/mod"
-      - JS/TS:  "const X = require('./path/to/mod')" → "path/to/mod"
+    Used ONLY to disambiguate when ctags or grep return multiple matches
+    for the same type name. NOT used as a standalone file resolver.
+
+    Handles all common import syntaxes across languages:
+      - Python: "from a.b.c import X"             → "a/b/c"
+      - Java:   "import a.b.c.X;"                 → "a/b/c/X"
+      - JS/TS:  "import { X } from './path/mod'"   → "path/mod"
+      - JS/TS:  "const X = require('./path/mod')"  → "path/mod"
+      - C#:     "using A.B.C;"                     → "A/B/C"
+      - PHP:    "use App\\Models\\User;"            → "App/Models/User"
+      - Rust:   "use crate::models::user;"         → "models/user"
+      - Go:     'import "github.com/u/pkg"'        → "github.com/u/pkg"
+      - Ruby:   "require 'path/to/file'"           → "path/to/file"
     """
     # Python-style: from a.b.c import X
     m = re.match(r"from\s+([\w.]+)\s+import", import_source)
     if m:
         return m.group(1).replace(".", "/")
 
-    # JS/TS: from './path' or require('./path')
-    m = re.search(r"""(?:from\s+['"]|require\s*\(\s*['"])([^'"]+)['"]""", import_source)
+    # JS/TS/Ruby: from './path', require('./path'), require('path'),
+    # require_relative 'path'
+    m = re.search(
+        r"""(?:from\s+['"]|require(?:_relative)?\s*\(?\s*['"])([^'"]+)['"]""",
+        import_source,
+    )
     if m:
         frag = m.group(1)
         # Strip all leading ./ and ../ sequences
         frag = re.sub(r"^(?:\.\./|\./)+", "", frag)
         return frag
 
-    # Java: import a.b.c.X;
+    # C#: using A.B.C;
+    m = re.match(r"using\s+([\w.]+)\s*;?", import_source)
+    if m:
+        return m.group(1).replace(".", "/")
+
+    # PHP: use App\Models\User;
+    m = re.match(r"use\s+([\w\\\\]+)\s*;?", import_source)
+    if m:
+        return m.group(1).replace("\\", "/")
+
+    # Rust: use crate::models::user;  or  use crate::models::{User, Post};
+    m = re.match(r"use\s+([\w:]+)(?:::\{.*\})?\s*;?", import_source)
+    if m:
+        frag = m.group(1)
+        frag = re.sub(r"^crate::", "", frag)
+        return frag.replace("::", "/")
+
+    # Go: import "github.com/user/pkg"
+    m = re.search(r'import\s+"([^"]+)"', import_source)
+    if m:
+        return m.group(1)
+
+    # Java/Kotlin: import a.b.c.X;  (must come after C#/Rust/PHP checks
+    # since those also use keywords that overlap)
     m = re.match(r"import\s+(static\s+)?([\w.]+)\s*;?", import_source)
     if m:
         return m.group(2).replace(".", "/")
-
-    return None
-
-
-def resolve_from_import_path(
-    import_source: str | None,
-    project_root: Path,
-) -> Path | None:
-    """Resolve a type to a file by matching the import path against the filesystem.
-
-    Extracts a path fragment from the import statement and searches for a
-    matching file on disk. This is deterministic and language-agnostic.
-    """
-    if not import_source:
-        return None
-
-    fragment = _extract_path_fragment(import_source)
-    if not fragment:
-        return None
-
-    # Try direct path match with common extensions
-    for ext in _SOURCE_EXTENSIONS:
-        candidate = project_root / (fragment + ext)
-        if candidate.is_file():
-            return candidate.resolve()
-
-    # Fragment may be missing a leading directory (e.g. "app/models" when the
-    # actual path is "src/app/models.py"). Glob for it.
-    pattern = f"**/{fragment}"
-    for ext in _SOURCE_EXTENSIONS:
-        matches = list(project_root.glob(pattern + ext))
-        if len(matches) == 1:
-            return matches[0].resolve()
-        if len(matches) > 1:
-            # Multiple matches — prefer shortest path (most direct match)
-            return min(matches, key=lambda p: len(p.parts)).resolve()
 
     return None
 
@@ -204,10 +217,12 @@ def resolve_from_ctags(
     import_source: str | None,
     ctags_index: dict[str, list[CtagsEntry]],
 ) -> Path | None:
-    """Resolve a type name to a file path using the ctags index.
+    """Resolve a type name to a file path using the ctags index (primary resolver).
 
     If multiple entries exist for the same name, uses import_source to
-    disambiguate by matching path fragments.
+    disambiguate by matching path fragments. Falls back to heuristic
+    scoring: files whose stem matches the type name are more likely to
+    be the definition than files that merely reference the type.
     """
     entries = ctags_index.get(name)
     if not entries:
@@ -216,18 +231,33 @@ def resolve_from_ctags(
     if len(entries) == 1:
         return entries[0].path
 
-    # Multiple entries — disambiguate with import_source
+    # Multiple entries — disambiguate with import_source path fragment
     if import_source:
         fragment = _extract_path_fragment(import_source)
         if fragment:
-            # Score: does the entry path contain the fragment?
             for entry in entries:
                 path_str = str(entry.path)
                 if fragment in path_str:
                     return entry.path
 
-    # No disambiguation possible — return first entry
-    return entries[0].path
+    # Heuristic scoring when no import_source or it didn't help.
+    # Prefer files whose stem matches the type name (case-insensitive),
+    # e.g. "User" → User.js over UserController.js.
+    name_lower = name.lower()
+    best = entries[0]
+    best_score = -1
+    for entry in entries:
+        score = 0
+        stem = entry.path.stem.lower()
+        if stem == name_lower:
+            score += 2  # Exact stem match (User.js for "User")
+        elif name_lower in stem:
+            score += 1  # Partial match (user_model.js for "User")
+        if score > best_score:
+            best_score = score
+            best = entry
+
+    return best.path
 
 
 def resolve_by_grep(
@@ -238,14 +268,18 @@ def resolve_by_grep(
     """Fallback resolver using grep for ctags misses.
 
     Catches TypedDict function-call style, Mongoose schemas, type aliases
-    defined via assignment, etc. Filters out import/require lines and uses
-    import_source path fragment for disambiguation when multiple matches exist.
+    defined via assignment, etc. Filters out import/use/require lines and
+    uses import_source path fragment for disambiguation when multiple
+    matches exist.
     """
-    pattern = rf"(class|interface|type|struct|enum)\s+{re.escape(name)}\b|{re.escape(name)}\s*="
+    pattern = (
+        rf"(class|interface|type|struct|enum|record)\s+{re.escape(name)}\b"
+        rf"|{re.escape(name)}\s*="
+    )
 
     include_args = []
-    for ext in ["*.py", "*.ts", "*.js", "*.java", "*.cs", "*.go", "*.rs", "*.php", "*.rb"]:
-        include_args.extend(["--include", ext])
+    for ext in _SOURCE_EXTENSIONS:
+        include_args.extend(["--include", f"*{ext}"])
 
     exclude_args = []
     for d in _EXCLUDE_DIRS:
@@ -302,6 +336,26 @@ def resolve_by_grep(
                     return f
 
     return candidate_files[0]
+
+
+def resolve_type(
+    name: str,
+    import_source: str | None,
+    ctags_index: dict[str, list[CtagsEntry]],
+    project_root: Path,
+) -> Path | None:
+    """Resolve a type name to its source file. Language-agnostic.
+
+    Two-tier resolution:
+      1. ctags (primary) — with import_source for disambiguation
+      2. grep (fallback) — for dynamic definitions ctags misses
+
+    import_source is never used as a standalone file resolver.
+    """
+    path = resolve_from_ctags(name, import_source, ctags_index)
+    if path is not None:
+        return path
+    return resolve_by_grep(name, project_root, import_source)
 
 
 def scan_refs_in_schemas(schemas: dict[str, dict]) -> set[str]:

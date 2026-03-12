@@ -39,11 +39,10 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from swagger_agent.config import LLMConfig
+from swagger_agent.infra.assembler import _sanitize_ref_hint
 from swagger_agent.infra.resolve import (
     build_ctags_index,
-    resolve_from_import_path,
-    resolve_from_ctags,
-    resolve_by_grep,
+    resolve_type,
     scan_refs_in_schemas,
 )
 from swagger_agent.agents.schema_extractor.harness import (
@@ -54,7 +53,15 @@ from swagger_agent.models import EndpointDescriptor, SchemaDescriptor
 
 
 def collect_ref_hints_from_descriptor(descriptor: EndpointDescriptor) -> list[dict]:
-    """Extract all ref_hints from an endpoint descriptor."""
+    """Extract all ref_hints from an endpoint descriptor.
+
+    Sanitizes ref_hint values (strips stale $ref prefixes like
+    '#/components/schemas/') before returning.
+
+    All resolution types are included — even "unresolvable" hints are
+    passed through so ctags/grep can attempt resolution. The LLM's
+    classification is just a hint; infrastructure should always try.
+    """
     hints: list[dict] = []
     seen: set[str] = set()
 
@@ -67,9 +74,12 @@ def collect_ref_hints_from_descriptor(descriptor: EndpointDescriptor) -> list[di
                 refs.append(resp.schema_ref)
 
         for ref in refs:
-            if ref.ref_hint not in seen and ref.resolution != "unresolvable":
-                seen.add(ref.ref_hint)
-                hints.append(ref.model_dump(by_alias=True))
+            clean_name = _sanitize_ref_hint(ref.ref_hint)
+            if clean_name not in seen:
+                seen.add(clean_name)
+                hint = ref.model_dump(by_alias=True)
+                hint["ref_hint"] = clean_name
+                hints.append(hint)
 
     return hints
 
@@ -116,9 +126,9 @@ def run_schema_loop(
     extracted_files: set[str] = set()       # Files already processed
     queue: deque[tuple[str, str | None]] = deque()
 
-    # 1. Seed the queue from ref_hints
+    # 1. Seed the queue from ref_hints (sanitize stale $ref prefixes)
     for hint in ref_hints:
-        name = hint["ref_hint"]
+        name = _sanitize_ref_hint(hint["ref_hint"])
         import_source = hint.get("import_source")
         if name not in all_schemas:
             queue.append((name, import_source))
@@ -139,12 +149,11 @@ def run_schema_loop(
             if schema_name in all_schemas:
                 continue
 
-            # Three-tier resolution: import path → ctags → grep
-            file_path = resolve_from_import_path(import_source, project_root)
-            if file_path is None:
-                file_path = resolve_from_ctags(schema_name, import_source, ctags_index)
-            if file_path is None:
-                file_path = resolve_by_grep(schema_name, project_root, import_source)
+            # Two-tier resolution: ctags (primary) → grep (fallback)
+            # import_source used only for disambiguation, not standalone lookup
+            file_path = resolve_type(
+                schema_name, import_source, ctags_index, project_root,
+            )
 
             if file_path is None:
                 if not quiet:

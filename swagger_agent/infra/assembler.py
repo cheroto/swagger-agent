@@ -29,31 +29,55 @@ def _derive_security_scheme(name: str) -> dict:
 
 
 def _normalize_path(base_path: str, endpoint_path: str) -> str:
-    """Combine base_path and endpoint path, stripping double slashes."""
+    """Combine base_path and endpoint path, normalizing to OpenAPI format."""
     full = f"{base_path.rstrip('/')}/{endpoint_path.lstrip('/')}"
     # Collapse double slashes (but keep the leading one)
     full = re.sub(r"//+", "/", full)
     if not full.startswith("/"):
         full = "/" + full
+    # Convert framework-specific path param syntax to OpenAPI {param} style
+    # :param (Express, Sinatra, Flask) and <param> (Flask, Django)
+    full = re.sub(r":(\w+)", r"{\1}", full)
+    full = re.sub(r"<(\w+)>", r"{\1}", full)
     return full
 
 
+# Language-agnostic array/collection wrapper detection.
+# Matches any Generic<T>, Generic[T], []T, or T[] pattern — no need to
+# enumerate specific wrapper names per language.
 _ARRAY_PATTERN = re.compile(
     r"^(?:"
-    r"\[\](.+)"           # Go:    []Type
+    r"\[\](.+)"           # Go:      []Type
     r"|(.+)\[\]"          # TS/Java: Type[]
-    r"|(?:List|Array|Sequence|Set)\[(.+)\]"  # Python: List[Type]
-    r"|(?:List|Array|Set|Vec)<(.+)>"         # Java/TS/Rust: List<Type>
+    r"|\w+\[(.+)\]"      # Generic[T]: List[T], Array[T], Sequence[T], Set[T], etc.
+    r"|\w+<(.+)>"        # Generic<T>: List<T>, Vec<T>, IEnumerable<T>, etc.
     r")$"
 )
+
+
+_REF_PREFIX = "#/components/schemas/"
+
+
+def _sanitize_ref_hint(name: str) -> str:
+    """Strip stale $ref prefixes that LLMs sometimes include in ref_hint values.
+
+    Handles both single and repeated prefixes (e.g.
+    "#/components/schemas/User" → "User",
+    "#/components/schemas/#/components/schemas/User" → "User").
+    """
+    while name.startswith(_REF_PREFIX):
+        name = name[len(_REF_PREFIX):]
+    return name.strip()
 
 
 def _parse_ref_hint(name: str) -> tuple[bool, str]:
     """Parse a ref_hint, detecting array wrappers.
 
+    Sanitizes stale $ref prefixes before parsing.
     Returns (is_array, inner_type_name).
     """
-    m = _ARRAY_PATTERN.match(name.strip())
+    name = _sanitize_ref_hint(name)
+    m = _ARRAY_PATTERN.match(name)
     if m:
         inner = next(g for g in m.groups() if g is not None)
         return True, inner.strip()
@@ -86,7 +110,7 @@ def _build_ref(name: str) -> dict:
             "type": "array",
             "items": {"$ref": f"#/components/schemas/{inner}"},
         }
-    return {"$ref": f"#/components/schemas/{name}"}
+    return {"$ref": f"#/components/schemas/{inner}"}
 
 
 def _build_operation(ep: Endpoint) -> dict:

@@ -94,16 +94,22 @@ _PHASE2_OUTPUT_FORMAT = """\
 
 For every type reference (request bodies, response schemas, parameter types):
 
-1. If the type is imported — use the exact import line from the file:
-   - `resolution: "import"`, `import_source`: the exact import statement
+1. **Type appears in the import/require/using statements** — use the exact line:
+   - `resolution: "import"`, `import_source`: the exact import/require/using statement
+   - This applies to ALL languages: Python `from`/`import`, JS `require`/`import`, Java `import`, C# `using`, Go `import`, Rust `use`, PHP `use`, Ruby `require`, etc.
 
-2. No import found but type is used (same-package, implicit):
+2. **Type is used in the code but has NO import line** — it lives in the same package/namespace/module:
    - `resolution: "class_to_file"`, `import_source`: null
+   - This is COMMON: types in the same namespace (C#), same package (Java/Go), same directory (JS/TS), or same module (Python) often need no explicit import.
+   - If a type name appears as a return type, parameter type, or is instantiated in the code, and there is no import for it, it is `class_to_file` — NOT `unresolvable`.
 
-3. External/framework types or no type annotation:
+3. **Framework/language built-in types ONLY**:
    - `resolution: "unresolvable"`
-   - Includes: dict, Any, Response, StreamingResponse, Object, framework types
-   - Also for dynamically constructed responses or missing return types
+   - This is STRICTLY for: built-in types (dict, object, string, int, Any), framework base types (Response, IActionResult, HttpResponse, ActionResult, StreamingResponse, Task), and generic containers when the inner type has no name (e.g. a raw dict/map literal).
+   - If a type has a domain-specific name (e.g. ArticleEnvelope, UserResponse, CreateCommand, PostRequest), it is NEVER unresolvable — use `class_to_file` if no import exists.
+   - Also use for dynamically constructed responses with no named type.
+
+When emitting ref_hint names, use the **inner type only** — strip collection wrappers. For example: `List<Article>` → ref_hint: "Article", `Vec<User>` → ref_hint: "User", `Article[]` → ref_hint: "Article".
 
 ## Error Response Rules
 
@@ -134,7 +140,7 @@ For every type reference (request bodies, response schemas, parameter types):
 
 - Extract ALL endpoints. Do not skip any.
 - source_file is set by the harness — ignore it.
-- When in doubt about a type's resolution, prefer "unresolvable".
+- When in doubt between "class_to_file" and "unresolvable": if the type has a domain-specific name (not a language/framework built-in), use "class_to_file".
 """
 
 
@@ -314,40 +320,29 @@ RefHint:
 
 For every type reference you encounter (request bodies, response schemas, parameter types):
 
-1. **Look at the imports at the top of the file.** If the type is imported, capture the full import line.
+1. **Look at the imports at the top of the file.** If the type is imported (via import, require, using, use, etc.), capture the full import line.
    - `resolution: "import"` — when you found the import line
-   - `import_source`: the exact import statement (e.g. `"from app.schemas.user import UserResponse"` or `"const { UserResponse } = require('./schemas/user')"`)
+   - `import_source`: the exact import statement (e.g. `"from app.schemas.user import UserResponse"`, `"const { UserResponse } = require('./schemas/user')"`, `"using Conduit.Features.Articles;"`)
 
-2. **No import found but type is used** (same-package, implicit):
-   - `resolution: "class_to_file"`
-   - `import_source`: null
+2. **No import found but type is used** (same-package/namespace/module, implicit):
+   - `resolution: "class_to_file"`, `import_source`: null
+   - This is COMMON: types in the same namespace (C#), same package (Java/Go), same directory (JS/TS), or same module often need no explicit import. If a type has a domain-specific name and appears in the code with no import, it is `class_to_file`.
 
-3. **External/framework types or no type annotation:**
+3. **Framework/language built-in types ONLY:**
    - `resolution: "unresolvable"`
-   - Examples: `dict`, `Any`, `Response`, `StreamingResponse`, `Object`, framework-provided types
-   - Also use for dynamically constructed responses or when the handler has no return type
+   - STRICTLY for: built-in types (dict, object, string, int, Any), framework base types (Response, IActionResult, HttpResponse, StreamingResponse, Task), generic containers with no named inner type.
+   - If a type has a domain-specific name (ArticleEnvelope, UserResponse, PostRequest), it is NEVER unresolvable.
+
+When emitting ref_hint names, use the **inner type only** — strip collection wrappers. `List<Article>` → ref_hint: "Article".
 
 ## Authentication Detection
 
-### Express
-- Middleware functions in the route handler chain: `router.get('/path', auth.required, handler)` — `auth.required` means authenticated
-- `auth.optional` means auth is optional (still include security scheme)
-- No auth middleware = explicitly public, set `security: []`
-
-### FastAPI
-- `Depends(get_current_user)` or similar dependency injection = authenticated
-- Look for `Security()` dependencies
-- No auth dependency = explicitly public, set `security: []`
-
-### NestJS
-- `@UseGuards(AuthGuard)` decorator = authenticated
-- `@Public()` decorator = explicitly public
-- No guard on controller-level guard = inherit
-
-### Spring
-- `@PreAuthorize` annotation = authenticated
-- Method-level security annotations
-- SecurityFilterChain configuration
+Look for auth mechanisms regardless of framework:
+- Middleware/filters in the handler chain (e.g. `auth.required`, `authenticate`)
+- Decorators/annotations on endpoints or controllers (e.g. `[Authorize]`, `@PreAuthorize`, `@UseGuards`)
+- Dependency injection of auth (e.g. `Depends(get_current_user)`, `@Inject(AuthService)`)
+- Auth optional markers (still include security scheme)
+- Endpoints without any auth indicator = explicitly public, set `security: []`
 
 ### Security Scheme Naming
 - Derive the scheme name from the auth mechanism observed:
@@ -411,7 +406,7 @@ For every type reference you encounter (request bodies, response schemas, parame
 
 - Extract ALL endpoints in the file. Do not skip any.
 - The `source_file` field on EndpointDescriptor will be set by the harness — you don't need to worry about it.
-- When in doubt about a type's resolution, prefer "unresolvable" over guessing.
+- When in doubt between "class_to_file" and "unresolvable": if the type has a domain-specific name (not a language/framework built-in), use "class_to_file".
 - For Express.js: pay attention to `module.exports = router` at the end — this confirms it's a route file.
 - For Express.js: `req.body` usage implies a JSON request body even without explicit schema types.
 - For Express.js: look for validation middleware (e.g. express-validator, joi, celebrate) for parameter constraints.
