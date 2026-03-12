@@ -19,7 +19,7 @@ from rich.table import Table
 from rich.text import Text
 
 from swagger_agent.agents.scout.harness import ScoutEventHandler, StateUpdates
-from swagger_agent.models import DiscoveryManifest
+from swagger_agent.models import CompletenessChecklist, DiscoveryManifest
 
 
 # ── Mascot Data (self-contained to avoid root-level import) ──────────────────
@@ -213,6 +213,10 @@ class PipelineDashboard(ScoutEventHandler):
         self._logs: list[str] = []
         self._max_logs = 12
 
+        # Completeness (replaces activity log when run finishes)
+        self._completeness: CompletenessChecklist | None = None
+        self._finished = False
+
         # Animation
         self._running = False
         self._anim_thread: threading.Thread | None = None
@@ -385,6 +389,12 @@ class PipelineDashboard(ScoutEventHandler):
             self._log("VALID", f"[green]No errors[/green], {warnings} warning(s)", "yellow")
         else:
             self._log("VALID", "[green]Clean — no errors or warnings[/green]", "green")
+        self._refresh()
+
+    def set_completeness(self, completeness: CompletenessChecklist) -> None:
+        """Signal that the pipeline has finished and show completeness in the log area."""
+        self._completeness = completeness
+        self._finished = True
         self._refresh()
 
     # ── ScoutEventHandler implementation ──────────────────────────────────
@@ -722,6 +732,9 @@ class PipelineDashboard(ScoutEventHandler):
         return Panel(outer, title="[green]Spec Data[/green]", border_style="green")
 
     def _build_log(self) -> Panel:
+        if self._finished and self._completeness:
+            return self._build_completeness_panel()
+
         with self._lock:
             visible = self._logs[-self._max_logs:]
         if visible:
@@ -729,3 +742,44 @@ class PipelineDashboard(ScoutEventHandler):
         else:
             log_text = Text.from_markup("[dim]Waiting for activity...[/dim]")
         return Panel(log_text, title="[blue]Activity Log[/blue]", border_style="blue")
+
+    def _build_completeness_panel(self) -> Panel:
+        """Build the completeness checklist that replaces the activity log."""
+        CHECKS = [
+            ("has_endpoints",        "Endpoints discovered",     "critical"),
+            ("has_security_schemes", "Security schemes defined", "warning"),
+            ("endpoints_have_auth",  "Endpoints have auth",      "warning"),
+            ("has_error_responses",  "Error responses (4xx)",     "info"),
+            ("has_request_bodies",   "Request bodies",            "info"),
+            ("has_schemas",          "Schemas extracted",         "warning"),
+            ("no_unresolved_refs",   "All $refs resolved",       "warning"),
+            ("has_servers",          "Server URLs",               "info"),
+            ("route_coverage",       "Route coverage",            None),
+        ]
+
+        data = self._completeness.model_dump()
+        elapsed = self._elapsed()
+
+        table = Table(expand=True, show_header=False, box=None, padding=(0, 1))
+        table.add_column("Check", ratio=1)
+        table.add_column("Result", width=8, justify="center")
+
+        for key, label, severity in CHECKS:
+            value = data[key]
+            if isinstance(value, float):
+                pct = f"{value:.0%}"
+                if value >= 1.0:
+                    table.add_row(label, f"[green]{pct}[/green]")
+                elif value > 0:
+                    table.add_row(label, f"[yellow]{pct}[/yellow]")
+                else:
+                    table.add_row(label, f"[red]{pct}[/red]")
+            elif value:
+                table.add_row(label, "[green]✓[/green]")
+            else:
+                style = {"critical": "red", "warning": "yellow", "info": "dim"}.get(severity, "dim")
+                icon = {"critical": "✗", "warning": "—", "info": "—"}.get(severity, "—")
+                table.add_row(f"[{style}]{label}[/{style}]", f"[{style}]{icon}[/{style}]")
+
+        title = f"[green]Spec Completeness[/green]  [dim]({elapsed:.1f}s)[/dim]"
+        return Panel(table, title=title, border_style="green")

@@ -7,12 +7,34 @@ import json
 import os
 import sys
 from dataclasses import asdict
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
 from swagger_agent.config import LLMConfig
 from swagger_agent.pipeline import run_pipeline
+
+
+def _resolve_output_dir(target_dir: str) -> Path:
+    """Determine a smart output directory under outputs/<repo_name>.
+
+    If the directory already exists, appends a numeric suffix to avoid
+    overwriting previous runs: outputs/my-repo, outputs/my-repo_2, etc.
+    """
+    repo_name = Path(target_dir).resolve().name
+    base = Path("outputs") / repo_name
+
+    if not base.exists():
+        return base
+
+    # Find next available suffix
+    n = 2
+    while True:
+        candidate = Path("outputs") / f"{repo_name}_{n}"
+        if not candidate.exists():
+            return candidate
+        n += 1
 
 
 def _print_completeness(completeness, console: Console) -> None:
@@ -99,14 +121,22 @@ def main() -> None:
         result = run_pipeline(
             args.target_dir, config=config, console=console, dashboard=dashboard,
         )
-    finally:
+    except BaseException:
         if dashboard:
             dashboard.stop()
+        raise
 
-    # Print completeness table (after dashboard stops)
-    console.print()
-    _print_completeness(result.completeness, console)
-    console.print()
+    # Show completeness inside the dashboard before stopping it
+    if dashboard:
+        dashboard.set_completeness(result.completeness)
+        import time
+        time.sleep(0.5)  # Let the final refresh render
+        dashboard.stop()
+    else:
+        # No dashboard — print completeness table to console
+        console.print()
+        _print_completeness(result.completeness, console)
+        console.print()
 
     # Print timings
     if args.verbose:
@@ -123,22 +153,32 @@ def main() -> None:
             console.print(f"  {file}: {error}")
         console.print()
 
+    # ── Smart output: default to outputs/<repo_name>/ ──────────────────
+    output_dir = None
+    yaml_path = args.output
+    json_path = args.dump_json
+
+    if not yaml_path and not json_path:
+        # Default: write both YAML and JSON to outputs/<repo_name>/
+        output_dir = _resolve_output_dir(args.target_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        yaml_path = str(output_dir / "openapi.yaml")
+        json_path = str(output_dir / "result.json")
+
     # Output YAML
-    if args.output:
-        output_dir = os.path.dirname(args.output)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-        with open(args.output, "w") as f:
+    if yaml_path:
+        parent = os.path.dirname(yaml_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(yaml_path, "w") as f:
             f.write(result.yaml_str)
-        console.print(f"[bold green]Spec written to {args.output}[/bold green]")
-    else:
-        sys.stdout.write(result.yaml_str)
+        console.print(f"[bold green]Spec written to {yaml_path}[/bold green]")
 
     # Dump JSON
-    if args.dump_json:
-        dump_dir = os.path.dirname(args.dump_json)
-        if dump_dir:
-            os.makedirs(dump_dir, exist_ok=True)
+    if json_path:
+        parent = os.path.dirname(json_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
 
         dump = {
             "spec": result.spec,
@@ -150,9 +190,9 @@ def main() -> None:
             "failed_routes": result.failed_routes,
             "timings": result.timings,
         }
-        with open(args.dump_json, "w") as f:
+        with open(json_path, "w") as f:
             json.dump(dump, f, indent=2, default=str)
-        console.print(f"[dim]Full result written to {args.dump_json}[/dim]")
+        console.print(f"[dim]Full result written to {json_path}[/dim]")
 
 
 if __name__ == "__main__":
