@@ -1,150 +1,214 @@
-"""Import-to-file resolver for ref_hints.
+"""Ref resolver using universal-ctags for language-agnostic type→file mapping.
 
-Deterministic resolution of import statements to source file paths.
-Supports Java and Python imports. This is a prototype of the Ref Resolver
-infrastructure module described in CLAUDE.md.
+Replaces per-language import resolution with a single ctags index that supports
+100+ languages out of the box. Falls back to grep for edge cases ctags misses
+(TypedDict, Mongoose schemas, type aliases via assignment).
 """
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
+from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 
-def resolve_java_import(import_source: str, source_roots: list[Path]) -> Path | None:
-    """Resolve a Java import line to a file path.
+@dataclass
+class CtagsEntry:
+    name: str
+    path: Path
+    line: int
+    kind: str  # "class", "interface", "struct", "enum", etc.
 
-    Examples:
-        "import com.sopromadze.blogapi.model.user.User;"
-        → src/main/java/com/sopromadze/blogapi/model/user/User.java
 
-        "import com.sopromadze.blogapi.model.Album;"
-        → src/main/java/com/sopromadze/blogapi/model/Album.java
+# Kinds that represent type definitions worth resolving
+_RELEVANT_KINDS = frozenset({
+    "class", "interface", "struct", "enum", "type", "alias",
+    "record", "trait",
+})
+
+# Directories to exclude from ctags and grep
+_EXCLUDE_DIRS = [
+    "node_modules", "venv", ".venv", "__pycache__", ".git",
+    "dist", "build", "target", "vendor",
+]
+
+_EXCLUDE_PATTERNS = ["*.min.js", "*.lock"]
+
+
+def _find_ctags_binary() -> str:
+    """Find a universal-ctags binary, raising RuntimeError if not found."""
+    for candidate in [shutil.which("ctags"), "/opt/homebrew/bin/ctags"]:
+        if candidate and Path(candidate).is_file():
+            # Verify it's universal-ctags
+            try:
+                result = subprocess.run(
+                    [candidate, "--version"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if "Universal Ctags" in result.stdout:
+                    return candidate
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+    raise RuntimeError(
+        "universal-ctags not found. Install it:\n"
+        "  macOS:  brew install universal-ctags\n"
+        "  Ubuntu: sudo apt install universal-ctags\n"
+        "  Arch:   sudo pacman -S ctags"
+    )
+
+
+def build_ctags_index(project_root: Path) -> dict[str, list[CtagsEntry]]:
+    """Build a {TypeName → [CtagsEntry]} index for a project.
+
+    Runs universal-ctags once over the project, filters to type-definition
+    kinds, and returns the grouped index.
     """
-    # Strip "import " prefix and trailing semicolon/whitespace
-    cleaned = import_source.strip()
-    cleaned = re.sub(r"^import\s+(static\s+)?", "", cleaned)
-    cleaned = cleaned.rstrip("; \t")
+    ctags_bin = _find_ctags_binary()
 
-    # Convert dots to path separators
-    rel_path = cleaned.replace(".", "/") + ".java"
+    cmd = [
+        ctags_bin, "--output-format=json", "--fields=+n", "-R",
+    ]
+    for d in _EXCLUDE_DIRS:
+        cmd.append(f"--exclude={d}")
+    for p in _EXCLUDE_PATTERNS:
+        cmd.append(f"--exclude={p}")
+    cmd.append(str(project_root))
 
-    for root in source_roots:
-        candidate = root / rel_path
-        if candidate.is_file():
-            return candidate
+    result = subprocess.run(
+        cmd, capture_output=True, text=True, timeout=30,
+        cwd=str(project_root),
+    )
+
+    index: dict[str, list[CtagsEntry]] = defaultdict(list)
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            tag = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        kind = tag.get("kind", "")
+        if kind not in _RELEVANT_KINDS:
+            continue
+
+        name = tag.get("name", "")
+        path_str = tag.get("path", "")
+        line_no = tag.get("line", 0)
+
+        if not name or not path_str:
+            continue
+
+        # ctags paths are relative to cwd (project_root)
+        abs_path = (project_root / path_str).resolve()
+        index[name].append(CtagsEntry(
+            name=name, path=abs_path, line=line_no, kind=kind,
+        ))
+
+    return dict(index)
+
+
+def _extract_path_fragment(import_source: str) -> str | None:
+    """Extract a path-like fragment from an import statement for disambiguation.
+
+    Handles:
+      - Python: "from a.b.c import X" → "a/b/c"
+      - Java:   "import a.b.c.X;"     → "a/b/c/X"
+      - JS/TS:  "import { X } from './path/to/mod'" → "path/to/mod"
+      - JS/TS:  "const X = require('./path/to/mod')" → "path/to/mod"
+    """
+    # Python-style: from a.b.c import X
+    m = re.match(r"from\s+([\w.]+)\s+import", import_source)
+    if m:
+        return m.group(1).replace(".", "/")
+
+    # JS/TS: from './path' or require('./path')
+    m = re.search(r"""(?:from\s+['"]|require\s*\(\s*['"])([^'"]+)['"]""", import_source)
+    if m:
+        frag = m.group(1)
+        # Strip leading ./ or ../
+        frag = re.sub(r"^\.{1,2}/", "", frag)
+        return frag
+
+    # Java: import a.b.c.X;
+    m = re.match(r"import\s+(static\s+)?([\w.]+)\s*;?", import_source)
+    if m:
+        return m.group(2).replace(".", "/")
 
     return None
 
 
-def resolve_python_import(import_source: str, project_root: Path) -> Path | None:
-    """Resolve a Python import line to a file path.
+def resolve_from_ctags(
+    name: str,
+    import_source: str | None,
+    ctags_index: dict[str, list[CtagsEntry]],
+) -> Path | None:
+    """Resolve a type name to a file path using the ctags index.
 
-    Examples:
-        "from app.schemas.user import UserResponse"
-        → app/schemas/user.py
-
-        "from app.models.article import Article"
-        → app/models/article.py
+    If multiple entries exist for the same name, uses import_source to
+    disambiguate by matching path fragments.
     """
-    # Parse "from X import Y" or "import X"
-    match = re.match(r"from\s+([\w.]+)\s+import", import_source.strip())
-    if match:
-        module_path = match.group(1)
-    else:
-        match = re.match(r"import\s+([\w.]+)", import_source.strip())
-        if not match:
-            return None
-        module_path = match.group(1)
-
-    # Convert dots to path separators
-    rel_path = module_path.replace(".", "/")
-
-    # Try as file first, then as package __init__
-    for suffix in [".py", "/__init__.py"]:
-        candidate = project_root / (rel_path + suffix)
-        if candidate.is_file():
-            return candidate
-
-    return None
-
-
-def resolve_js_import(import_source: str, source_file: Path) -> Path | None:
-    """Resolve a JS/TS import to a file path (relative to the importing file).
-
-    Examples:
-        "const { User } = require('./models/user')"
-        → resolved relative to source_file
-
-        "import { User } from '../models/user'"
-        → resolved relative to source_file
-    """
-    # Match require('./path') or from './path' or from "../path"
-    match = re.search(r"""(?:require\s*\(\s*['"]|from\s+['""])(\.\.?/[^'"]+)['"]""", import_source)
-    if not match:
+    entries = ctags_index.get(name)
+    if not entries:
         return None
 
-    rel_import = match.group(1)
-    base_dir = source_file.parent
-    candidate_base = (base_dir / rel_import).resolve()
+    if len(entries) == 1:
+        return entries[0].path
 
-    # Try with common extensions
-    for ext in ["", ".js", ".ts", ".mjs", "/index.js", "/index.ts"]:
-        candidate = Path(str(candidate_base) + ext)
-        if candidate.is_file():
-            return candidate
+    # Multiple entries — disambiguate with import_source
+    if import_source:
+        fragment = _extract_path_fragment(import_source)
+        if fragment:
+            # Score: does the entry path contain the fragment?
+            for entry in entries:
+                path_str = str(entry.path)
+                if fragment in path_str:
+                    return entry.path
 
-    return None
+    # No disambiguation possible — return first entry
+    return entries[0].path
 
 
-def resolve_same_package(class_name: str, referring_file: Path) -> Path | None:
-    """Resolve a class by looking in the same directory as the referring file.
+def resolve_by_grep(name: str, project_root: Path) -> Path | None:
+    """Fallback resolver using grep for ctags misses.
 
-    Handles Java same-package access (no import required) and Python
-    same-directory modules.
+    Catches TypedDict function-call style, Mongoose schemas, type aliases
+    defined via assignment, etc.
     """
-    parent = referring_file.parent
+    pattern = rf"(class|interface|type|struct|enum)\s+{re.escape(name)}\b|{re.escape(name)}\s*="
 
-    # Java: ClassName.java in same directory
-    candidate = parent / f"{class_name}.java"
-    if candidate.is_file():
-        return candidate
+    include_args = []
+    for ext in ["*.py", "*.ts", "*.js", "*.java", "*.cs", "*.go", "*.rs", "*.php", "*.rb"]:
+        include_args.extend(["--include", ext])
 
-    # Python: class_name.py (lowercase) in same directory
-    candidate = parent / f"{class_name.lower()}.py"
-    if candidate.is_file():
-        return candidate
+    exclude_args = []
+    for d in _EXCLUDE_DIRS:
+        exclude_args.append(f"--exclude-dir={d}")
 
-    return None
-
-
-def resolve_import(
-    import_source: str,
-    framework: str,
-    project_root: Path,
-    source_roots: list[Path] | None = None,
-    source_file: Path | None = None,
-) -> Path | None:
-    """Resolve an import line to a file path based on framework."""
-    if framework in ("spring", "java"):
-        roots = source_roots or _find_java_source_roots(project_root)
-        return resolve_java_import(import_source, roots)
-    elif framework in ("fastapi", "flask", "django", "python"):
-        return resolve_python_import(import_source, project_root)
-    elif framework in ("express", "nestjs", "node", "typescript"):
-        if source_file:
-            return resolve_js_import(import_source, source_file)
-    return None
-
-
-def _find_java_source_roots(project_root: Path) -> list[Path]:
-    """Find standard Java source roots in a project."""
-    candidates = [
-        project_root / "src" / "main" / "java",
-        project_root / "src",
-        project_root,
+    cmd = [
+        "grep", "-rn", "-l", "-E", pattern,
+        *include_args, *exclude_args,
+        str(project_root),
     ]
-    return [c for c in candidates if c.is_dir()]
+
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line:
+            return Path(line).resolve()
+
+    return None
 
 
 def scan_refs_in_schemas(schemas: dict[str, dict]) -> set[str]:
@@ -168,36 +232,3 @@ def scan_refs_in_schemas(schemas: dict[str, dict]) -> set[str]:
 
     _walk(schemas)
     return refs
-
-
-def parse_imports_from_file(file_path: Path, framework: str) -> dict[str, str]:
-    """Parse import lines from a source file, return {ClassName: import_line}.
-
-    This builds the class-to-file mapping incrementally as files are discovered.
-    """
-    content = file_path.read_text(encoding="utf-8", errors="replace")
-    imports: dict[str, str] = {}
-
-    if framework in ("spring", "java"):
-        for line in content.splitlines():
-            line = line.strip()
-            if line.startswith("import ") and not line.startswith("import static"):
-                # "import com.foo.bar.Baz;" → class_name = "Baz"
-                cleaned = line.rstrip(";").strip()
-                parts = cleaned.split(".")
-                if parts:
-                    class_name = parts[-1]
-                    imports[class_name] = line
-    elif framework in ("fastapi", "flask", "django", "python"):
-        for line in content.splitlines():
-            line = line.strip()
-            match = re.match(r"from\s+[\w.]+\s+import\s+(.+)", line)
-            if match:
-                names = [n.strip() for n in match.group(1).split(",")]
-                for name in names:
-                    # Handle "as" aliases
-                    actual = name.split(" as ")[0].strip()
-                    if actual and actual[0].isupper():
-                        imports[actual] = line
-
-    return imports

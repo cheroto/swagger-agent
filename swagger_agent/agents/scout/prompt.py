@@ -24,7 +24,7 @@ Persist new structured findings. Set to null ONLY if the turn revealed absolutel
 Fields you can set (all optional, include only what's new):
 - `framework` (string) - e.g. "express", "fastapi", "nestjs", "spring"
 - `language` (string) - e.g. "javascript", "python", "typescript", "java"
-- `route_files` (array of strings) - files with HTTP endpoint definitions
+- `route_files` (array of strings) - source code files where HTTP endpoints are defined (never YAML/JSON specs or generated files)
 - `servers` (array of strings) - server URLs
 - `base_path` (string) - API base path
 - `completed_tasks` (array of strings) - task names to check off from remaining_tasks

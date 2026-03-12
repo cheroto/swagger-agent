@@ -40,10 +40,10 @@ from rich.table import Table
 
 from swagger_agent.config import LLMConfig
 from swagger_agent.infra.resolve import (
-    resolve_import,
-    resolve_same_package,
+    build_ctags_index,
+    resolve_from_ctags,
+    resolve_by_grep,
     scan_refs_in_schemas,
-    parse_imports_from_file,
 )
 from swagger_agent.agents.schema_extractor.harness import (
     run_schema_extractor,
@@ -73,20 +73,6 @@ def collect_ref_hints_from_descriptor(descriptor: EndpointDescriptor) -> list[di
     return hints
 
 
-def _find_referrer(
-    ref_name: str,
-    schemas: dict[str, dict],
-    source_files: dict[str, Path],
-) -> Path | None:
-    """Find which file contains a schema that references ref_name via $ref."""
-    target_ref = f"#/components/schemas/{ref_name}"
-    for schema_name, schema in schemas.items():
-        schema_json = json.dumps(schema)
-        if target_ref in schema_json and schema_name in source_files:
-            return source_files[schema_name]
-    return None
-
-
 def run_schema_loop(
     ref_hints: list[dict],
     framework: str,
@@ -111,23 +97,21 @@ def run_schema_loop(
     console = console or Console(stderr=True)
     config = config or LLMConfig()
 
+    # Build ctags index once before the loop
+    console.print("[dim]Building ctags index...[/dim]")
+    ctags_index = build_ctags_index(project_root)
+    console.print(f"[dim]Indexed {sum(len(v) for v in ctags_index.values())} type definitions[/dim]")
+
     all_schemas: dict[str, dict] = {}      # Accumulated schemas
     extracted_files: set[str] = set()       # Files already processed
-    # Queue items: (schema_name, import_source, referring_file)
-    # referring_file enables same-package fallback resolution
-    queue: deque[tuple[str, str | None, Path | None]] = deque()
+    queue: deque[tuple[str, str | None]] = deque()
 
     # 1. Seed the queue from ref_hints
     for hint in ref_hints:
         name = hint["ref_hint"]
         import_source = hint.get("import_source")
         if name not in all_schemas:
-            queue.append((name, import_source, None))
-
-    # Track class→import mapping built incrementally from parsed files
-    class_imports: dict[str, str] = {}
-    # Track which file each schema was extracted from (for same-package lookups)
-    schema_source_files: dict[str, Path] = {}
+            queue.append((name, import_source))
 
     depth = 0
     while queue and depth < max_depth:
@@ -137,36 +121,20 @@ def run_schema_loop(
 
         # Process all items in the current batch
         round_new_schemas: dict[str, dict] = {}
-        round_extracted_from: dict[str, Path] = {}  # schema_name → file it came from
         round_items = [queue.popleft() for _ in range(batch_size)]
 
-        for schema_name, import_source, referring_file in round_items:
+        for schema_name, import_source in round_items:
             if schema_name in all_schemas:
                 continue
 
-            # Resolve import to file path
-            file_path = None
-            if import_source:
-                file_path = resolve_import(
-                    import_source, framework, project_root,
-                )
-
-            # Fallback 1: check class_imports mapping
-            if file_path is None and schema_name in class_imports:
-                file_path = resolve_import(
-                    class_imports[schema_name], framework, project_root,
-                )
-
-            # Fallback 2: same-package lookup (Java same-package, Python same-dir)
-            if file_path is None and referring_file is not None:
-                file_path = resolve_same_package(schema_name, referring_file)
-                if file_path:
-                    console.print(f"  [dim](same-package fallback)[/dim]", end=" ")
+            # Resolve via ctags, fall back to grep
+            file_path = resolve_from_ctags(schema_name, import_source, ctags_index)
+            if file_path is None:
+                file_path = resolve_by_grep(schema_name, project_root)
 
             if file_path is None:
                 console.print(f"  [red]Could not resolve[/red] {schema_name}"
                               f" (import: {import_source or 'none'})")
-                # Emit placeholder
                 all_schemas[schema_name] = {
                     "type": "object",
                     "description": "Schema could not be resolved from source code.",
@@ -176,19 +144,17 @@ def run_schema_loop(
 
             file_key = str(file_path)
             if file_key in extracted_files:
-                # Already extracted this file — schema might have a different name
                 console.print(f"  [dim]Already extracted {file_path.name}, skipping[/dim]")
                 continue
 
             console.print(f"  [bold]{schema_name}[/bold] → {file_path.relative_to(project_root)}")
 
-            # Parse imports from this file to build class→import mapping
-            file_imports = parse_imports_from_file(file_path, framework)
-            class_imports.update(file_imports)
-
-            # Build known_schemas context (only schemas this file references)
-            file_ref_names = set(file_imports.keys()) & set(all_schemas.keys())
-            known_schemas = {name: all_schemas[name] for name in file_ref_names}
+            # Build known_schemas context: schemas whose names appear in this file
+            file_text = file_path.read_text(encoding="utf-8", errors="replace")
+            known_schemas = {
+                n: all_schemas[n] for n in all_schemas
+                if n in file_text and not all_schemas[n].get("x-unresolved")
+            }
 
             # Run schema extractor
             context = SchemaExtractorContext(
@@ -207,9 +173,6 @@ def run_schema_loop(
                 )
                 round_new_schemas.update(descriptor.schemas)
                 extracted_files.add(file_key)
-                # Track source file for all schemas extracted from this file
-                for sname in descriptor.schemas:
-                    round_extracted_from[sname] = file_path
             except Exception as e:
                 console.print(f"    [red]Extraction failed:[/red] {e}")
                 all_schemas[schema_name] = {
@@ -218,9 +181,8 @@ def run_schema_loop(
                     "x-unresolved": True,
                 }
 
-        # Merge new schemas and source tracking
+        # Merge new schemas
         all_schemas.update(round_new_schemas)
-        schema_source_files.update(round_extracted_from)
 
         # Scan for new $ref targets not yet resolved
         new_refs = scan_refs_in_schemas(round_new_schemas)
@@ -231,18 +193,14 @@ def run_schema_loop(
                 f"\n  [cyan]New $refs discovered:[/cyan] {', '.join(sorted(unresolved))}"
             )
             for ref_name in unresolved:
-                # Try to find import source from accumulated class_imports
-                import_src = class_imports.get(ref_name)
-                # Find the file that referenced this schema (for same-package fallback)
-                referrer = _find_referrer(ref_name, round_new_schemas, round_extracted_from)
-                queue.append((ref_name, import_src, referrer))
+                queue.append((ref_name, None))
         else:
             console.print(f"\n  [green]No new unresolved $refs[/green]")
 
     if queue:
         console.print(f"\n[yellow]Stopped after {max_depth} rounds. "
                        f"{len(queue)} refs still pending.[/yellow]")
-        for name, _ in queue:
+        for name, _import_source in queue:
             if name not in all_schemas:
                 all_schemas[name] = {
                     "type": "object",
