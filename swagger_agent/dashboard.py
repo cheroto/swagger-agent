@@ -611,9 +611,11 @@ class PipelineDashboard(ScoutEventHandler):
 
     def _build_spec_data(self) -> Panel:
         """Accumulated spec artifacts — data that will become the swagger."""
-        parts: list[str] = []
 
-        # Identity line: framework (language) · base · servers — all on one line
+        # ── Top: high-level summary info ──────────────────────────────────
+        summary_parts: list[str] = []
+
+        # Row 1: framework/language · servers
         identity: list[str] = []
         if self._spec_framework:
             identity.append(f"[bold]{self._spec_framework}[/bold][dim]/{self._spec_language}[/dim]")
@@ -622,51 +624,26 @@ class PipelineDashboard(ScoutEventHandler):
         if self._spec_servers:
             identity.append(", ".join(self._spec_servers[:2]))
         if identity:
-            parts.append("  ".join(identity))
+            summary_parts.append("  ".join(identity))
 
-        # Counts line: route files · security — compact
+        # Row 2: counts — routes, endpoints, schemas, auth
         counts: list[str] = []
         if self._spec_route_files:
             counts.append(f"[dim]Routes:[/dim] {len(self._spec_route_files)} files")
+        ep_n = len(self._spec_endpoints)
+        if ep_n:
+            counts.append(f"[dim]Endpoints:[/dim] {ep_n}")
+        schema_n = len(self._spec_schema_names)
+        unresolved_n = len(self._spec_unresolved_schemas)
+        if schema_n or unresolved_n:
+            s = f"[dim]Schemas:[/dim] [green]{schema_n}[/green]"
+            if unresolved_n:
+                s += f" [red]+{unresolved_n} unresolved[/red]"
+            counts.append(s)
         if self._spec_security_schemes:
             counts.append(f"[dim]Auth:[/dim] [bold]{', '.join(sorted(self._spec_security_schemes))}[/bold]")
         if counts:
-            parts.append("  ".join(counts))
-
-        # Endpoints — compact table-like rows, truncate long paths
-        if self._spec_endpoints:
-            MC = {"GET": "green", "POST": "yellow", "PUT": "blue",
-                  "PATCH": "cyan", "DELETE": "red", "HEAD": "dim", "OPTIONS": "dim"}
-            parts.append("")
-            parts.append(f"[dim]Endpoints[/dim] [bold]{len(self._spec_endpoints)}[/bold]")
-            max_show = 8
-            for method, path, sec in self._spec_endpoints[:max_show]:
-                c = MC.get(method.upper(), "white")
-                # Truncate long paths to keep lines short
-                display_path = path if len(path) <= 40 else path[:37] + "..."
-                lock = " 🔓" if sec else ""
-                parts.append(f"  [{c}]{method:6s}[/{c}] {display_path}[dim]{lock}[/dim]")
-            remaining = len(self._spec_endpoints) - max_show
-            if remaining > 0:
-                parts.append(f"  [dim]+{remaining} more[/dim]")
-
-        # Schemas — inline comma-separated list instead of one-per-line
-        if self._spec_schema_names or self._spec_unresolved_schemas:
-            resolved_n = len(self._spec_schema_names)
-            unresolved_n = len(self._spec_unresolved_schemas)
-            parts.append("")
-            label = f"[dim]Schemas[/dim] [green]{resolved_n}[/green]"
-            if unresolved_n:
-                label += f" [red]+{unresolved_n} unresolved[/red]"
-            parts.append(label)
-            if self._spec_schema_names:
-                names = ", ".join(self._spec_schema_names[:12])
-                if len(self._spec_schema_names) > 12:
-                    names += f", [dim]+{len(self._spec_schema_names) - 12} more[/dim]"
-                parts.append(f"  [green]{names}[/green]")
-            if self._spec_unresolved_schemas:
-                unames = ", ".join(self._spec_unresolved_schemas[:4])
-                parts.append(f"  [red]✗ {unames}[/red]")
+            summary_parts.append("  ".join(counts))
 
         # Issues — compact, only when problems exist
         issues: list[str] = []
@@ -681,14 +658,68 @@ class PipelineDashboard(ScoutEventHandler):
         if self._validation_warnings:
             issues.append(f"[yellow]{self._validation_warnings} warning(s)[/yellow]")
         if issues:
-            parts.append("")
-            parts.append(f"[dim]Issues:[/dim] {', '.join(issues)}")
+            summary_parts.append(f"[dim]Issues:[/dim] {', '.join(issues)}")
 
-        if not parts:
-            parts.append("[dim]No spec data yet...[/dim]")
+        if not summary_parts and not self._spec_endpoints and not self._spec_schema_names:
+            return Panel("[dim]No spec data yet...[/dim]",
+                         title="[green]Spec Data[/green]", border_style="green")
 
-        content = "\n".join(parts)
-        return Panel(content, title="[green]Spec Data[/green]", border_style="green")
+        summary_text = Text.from_markup("\n".join(summary_parts)) if summary_parts else Text("")
+
+        # ── Bottom-left: Endpoints list ───────────────────────────────────
+        MC = {"GET": "green", "POST": "yellow", "PUT": "blue",
+              "PATCH": "cyan", "DELETE": "red", "HEAD": "dim", "OPTIONS": "dim"}
+        ep_lines: list[str] = []
+        # Reserve 2 lines for summary header, 2 for panel borders → available rows
+        # We'll cap at a reasonable max and show overflow
+        max_ep = 12
+        for method, path, sec in self._spec_endpoints[:max_ep]:
+            c = MC.get(method.upper(), "white")
+            max_path = 24 if sec else 28
+            display_path = path if len(path) <= max_path else path[:max_path - 3] + "..."
+            lock = " 🔓" if sec else ""
+            ep_lines.append(f"[{c}]{method:6s}[/{c}] {display_path}[dim]{lock}[/dim]")
+        remaining_ep = len(self._spec_endpoints) - max_ep
+        if remaining_ep > 0:
+            ep_lines.append(f"[dim]+{remaining_ep} more[/dim]")
+        ep_content = Text.from_markup("\n".join(ep_lines)) if ep_lines else Text.from_markup("[dim]—[/dim]")
+        ep_panel = Panel(ep_content,
+                         title=f"[dim]Endpoints[/dim] [bold]{ep_n}[/bold]",
+                         border_style="dim green", padding=(0, 1))
+
+        # ── Bottom-right: Schemas list ────────────────────────────────────
+        schema_lines: list[str] = []
+        max_sch = 12
+        for name in self._spec_schema_names[:max_sch]:
+            schema_lines.append(f"[green]{name}[/green]")
+        remaining_sch = len(self._spec_schema_names) - max_sch
+        if remaining_sch > 0:
+            schema_lines.append(f"[dim]+{remaining_sch} more[/dim]")
+        for name in self._spec_unresolved_schemas[:4]:
+            schema_lines.append(f"[red]✗ {name}[/red]")
+        remaining_unr = len(self._spec_unresolved_schemas) - 4
+        if remaining_unr > 0:
+            schema_lines.append(f"[dim red]+{remaining_unr} more unresolved[/dim red]")
+        sch_label = f"[green]{schema_n}[/green]"
+        if unresolved_n:
+            sch_label += f" [red]+{unresolved_n}[/red]"
+        sch_content = Text.from_markup("\n".join(schema_lines)) if schema_lines else Text.from_markup("[dim]—[/dim]")
+        sch_panel = Panel(sch_content,
+                          title=f"[dim]Schemas[/dim] {sch_label}",
+                          border_style="dim green", padding=(0, 1))
+
+        # ── Compose: summary on top, two columns on bottom ───────────────
+        columns = Table.grid(expand=True)
+        columns.add_column(ratio=1)
+        columns.add_column(ratio=1)
+        columns.add_row(ep_panel, sch_panel)
+
+        outer = Table.grid(expand=True)
+        outer.add_column(ratio=1)
+        outer.add_row(summary_text)
+        outer.add_row(columns)
+
+        return Panel(outer, title="[green]Spec Data[/green]", border_style="green")
 
     def _build_log(self) -> Panel:
         with self._lock:
