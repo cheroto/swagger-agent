@@ -60,6 +60,25 @@ def _parse_ref_hint(name: str) -> tuple[bool, str]:
     return False, name
 
 
+def _extract_refs_from_schema(schema: dict) -> set[str]:
+    """Extract all schema names referenced via $ref in a schema dict."""
+    refs: set[str] = set()
+    prefix = "#/components/schemas/"
+
+    def _walk(obj: object) -> None:
+        if isinstance(obj, dict):
+            if "$ref" in obj and isinstance(obj["$ref"], str) and obj["$ref"].startswith(prefix):
+                refs.add(obj["$ref"][len(prefix):])
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+
+    _walk(schema)
+    return refs
+
+
 def _build_ref(name: str) -> dict:
     is_array, inner = _parse_ref_hint(name)
     if is_array:
@@ -77,11 +96,14 @@ def _build_operation(ep: Endpoint) -> dict:
     if ep.tags:
         op["tags"] = ep.tags
 
-    # Parameters
+    # Parameters (deduplicate by name+in, keep last occurrence)
     if ep.parameters:
-        op["parameters"] = [
-            p.model_dump(by_alias=True, exclude_none=True) for p in ep.parameters
-        ]
+        seen: dict[tuple[str, str], dict] = {}
+        for p in ep.parameters:
+            dumped = p.model_dump(by_alias=True, exclude_none=True)
+            key = (dumped["name"], dumped["in"])
+            seen[key] = dumped
+        op["parameters"] = list(seen.values())
 
     # Request body
     if ep.request_body:
@@ -179,12 +201,28 @@ def assemble_spec(
                     _, inner = _parse_ref_hint(resp.schema_ref.ref_hint)
                     referenced_schemas.add(inner)
 
-    # Copy schemas into components/schemas
-    spec["components"]["schemas"] = dict(schemas)
+    # Only emit schemas that are referenced by endpoints (directly or transitively via $ref)
+    def _collect_transitive_refs(names: set[str], all_schemas: dict[str, dict]) -> set[str]:
+        """Walk $ref chains to find all transitively referenced schemas."""
+        result = set(names)
+        frontier = set(names)
+        while frontier:
+            next_frontier: set[str] = set()
+            for n in frontier:
+                schema = all_schemas.get(n, {})
+                for ref in _extract_refs_from_schema(schema):
+                    if ref not in result:
+                        result.add(ref)
+                        next_frontier.add(ref)
+            frontier = next_frontier
+        return result
 
-    # Add placeholders for referenced schemas not in the schemas dict
-    for name in referenced_schemas:
-        if name not in spec["components"]["schemas"]:
+    all_needed = _collect_transitive_refs(referenced_schemas, schemas)
+
+    for name in all_needed:
+        if name in schemas:
+            spec["components"]["schemas"][name] = schemas[name]
+        else:
             spec["components"]["schemas"][name] = {
                 "type": "object",
                 "description": (
