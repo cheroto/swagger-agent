@@ -20,7 +20,14 @@ from swagger_agent.agents.route_extractor.harness import (
 from swagger_agent.config import LLMConfig
 
 from .conftest import e2e
-from .helpers import ExpectedEndpoint, RouteGolden, assert_endpoints_match
+from .helpers import (
+    ExpectedEndpoint,
+    ExpectedPhase1Endpoint,
+    Phase1Golden,
+    RouteGolden,
+    assert_endpoints_match,
+    assert_phase1_match,
+)
 
 # ---------------------------------------------------------------------------
 # Golden data — manually curated from reading each repo's source code
@@ -59,6 +66,15 @@ ROUTE_GOLDEN: list[RouteGolden] = [
                 min_responses=2,
             ),
         ],
+        phase1=Phase1Golden(
+            min_endpoints=2,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="PUT", path="/users/update/{id}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/users/delete/{id}"),
+            ],
+            has_auth_patterns=True,
+            path_param_syntax=":",  # colon syntax — LLM may say ":param", ":id", etc.
+        ),
     ),
     # -----------------------------------------------------------------------
     # 2. spring-boot-blog — Spring Boot (PostController)
@@ -128,6 +144,23 @@ ROUTE_GOLDEN: list[RouteGolden] = [
                 param_names=["id"],
             ),
         ],
+        phase1=Phase1Golden(
+            min_endpoints=7,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/api/posts"),
+                ExpectedPhase1Endpoint(method="GET", path="/api/posts/category/{id}"),
+                ExpectedPhase1Endpoint(method="GET", path="/api/posts/tag/{id}"),
+                ExpectedPhase1Endpoint(method="POST", path="/api/posts"),
+                ExpectedPhase1Endpoint(method="GET", path="/api/posts/{id}"),
+                ExpectedPhase1Endpoint(method="PUT", path="/api/posts/{id}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/api/posts/{id}"),
+            ],
+            has_auth_patterns=True,
+            has_auth_imports=True,
+            base_prefix="/api/posts",
+            path_param_syntax="{param}",
+            required_import_substrings=["PreAuthorize"],
+        ),
     ),
     # -----------------------------------------------------------------------
     # 3. laravel-realworld — Laravel (routes/api.php)
@@ -220,6 +253,26 @@ ROUTE_GOLDEN: list[RouteGolden] = [
                 param_names=["user"],
             ),
         ],
+        phase1=Phase1Golden(
+            min_endpoints=15,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="POST", path="/api/users/login"),
+                ExpectedPhase1Endpoint(method="POST", path="/api/users"),
+                ExpectedPhase1Endpoint(method="GET", path="/api/user"),
+                ExpectedPhase1Endpoint(method="GET", path="/api/profiles/{user}"),
+                ExpectedPhase1Endpoint(method="POST", path="/api/profiles/{user}/follow"),
+                ExpectedPhase1Endpoint(method="GET", path="/api/articles"),
+                ExpectedPhase1Endpoint(method="POST", path="/api/articles"),
+                ExpectedPhase1Endpoint(method="GET", path="/api/articles/{article}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/api/articles/{article}"),
+                ExpectedPhase1Endpoint(method="GET", path="/api/tags"),
+            ],
+            has_auth_patterns=False,
+            has_auth_imports=False,
+            has_auth_inference_notes=True,  # Must detect middleware group hint
+            base_prefix="/api",
+            path_param_syntax="{param}",
+        ),
     ),
     # -----------------------------------------------------------------------
     # 4. aspnetcore-realworld — ASP.NET Core (ArticlesController.cs)
@@ -278,6 +331,22 @@ ROUTE_GOLDEN: list[RouteGolden] = [
                 param_names=["slug"],
             ),
         ],
+        phase1=Phase1Golden(
+            min_endpoints=6,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/articles"),
+                ExpectedPhase1Endpoint(method="GET", path="/articles/feed"),
+                ExpectedPhase1Endpoint(method="GET", path="/articles/{slug}"),
+                ExpectedPhase1Endpoint(method="POST", path="/articles"),
+                ExpectedPhase1Endpoint(method="PUT", path="/articles/{slug}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/articles/{slug}"),
+            ],
+            has_auth_patterns=True,
+            has_auth_imports=True,
+            base_prefix="/articles",
+            path_param_syntax="{param}",
+            required_import_substrings=["Authorization", "Security"],
+        ),
     ),
     # -----------------------------------------------------------------------
     # 5. passwordless-auth-rust — Axum (routes.rs)
@@ -350,6 +419,22 @@ ROUTE_GOLDEN: list[RouteGolden] = [
                 has_request_body=True,
             ),
         ],
+        phase1=Phase1Golden(
+            min_endpoints=9,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="POST", path="/request/magic", handler_name="request_magic"),
+                ExpectedPhase1Endpoint(method="GET", path="/verify/magic", handler_name="verify_magic"),
+                ExpectedPhase1Endpoint(method="POST", path="/totp/enroll", handler_name="totp_enroll"),
+                ExpectedPhase1Endpoint(method="POST", path="/totp/verify", handler_name="totp_verify"),
+                ExpectedPhase1Endpoint(method="POST", path="/token/refresh", handler_name="refresh_token"),
+                ExpectedPhase1Endpoint(method="POST", path="/webauthn/register/options"),
+                ExpectedPhase1Endpoint(method="POST", path="/webauthn/register/complete"),
+                ExpectedPhase1Endpoint(method="POST", path="/webauthn/login/options"),
+                ExpectedPhase1Endpoint(method="POST", path="/webauthn/login/complete"),
+            ],
+            has_auth_patterns=False,
+            has_auth_imports=True,  # jwt import is auth-related
+        ),
     ),
     # -----------------------------------------------------------------------
     # 6. levo-schema-service — FastAPI (routes.py)
@@ -392,6 +477,20 @@ ROUTE_GOLDEN: list[RouteGolden] = [
                 param_names=["application", "service", "version"],
             ),
         ],
+        phase1=Phase1Golden(
+            min_endpoints=4,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="POST", path="/schemas/import", handler_name="import_schema"),
+                ExpectedPhase1Endpoint(method="GET", path="/schemas/{application}/{service}/versions", handler_name="list_versions"),
+                ExpectedPhase1Endpoint(method="GET", path="/schemas/{application}/{service}/latest", handler_name="get_latest"),
+                ExpectedPhase1Endpoint(method="GET", path="/schemas/{application}/{service}/{version}", handler_name="get_version"),
+            ],
+            has_auth_patterns=False,
+            has_auth_imports=False,
+            base_prefix="/schemas",
+            path_param_syntax="{param}",
+            required_import_substrings=["fastapi", "UploadFile", "app.database", "app.services"],
+        ),
     ),
     # -----------------------------------------------------------------------
     # 7. 9jauni — Go net/http (main.go)
@@ -428,6 +527,16 @@ ROUTE_GOLDEN: list[RouteGolden] = [
                 param_names=["abbreviation"],
             ),
         ],
+        phase1=Phase1Golden(
+            min_endpoints=3,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/"),
+                ExpectedPhase1Endpoint(method="GET", path="/search"),
+                ExpectedPhase1Endpoint(method="GET", path="/searchab"),
+            ],
+            has_auth_patterns=False,
+            has_auth_imports=False,
+        ),
     ),
     # -----------------------------------------------------------------------
     # 8. energy-monitoring-app — AWS Lambda (get-history.ts)
@@ -453,6 +562,15 @@ ROUTE_GOLDEN: list[RouteGolden] = [
                 min_responses=2,
             ),
         ],
+        phase1=Phase1Golden(
+            min_endpoints=1,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/get-history"),
+            ],
+            has_auth_patterns=True,  # Should detect authorizer?.claims pattern
+            has_auth_imports=False,
+            required_import_substrings=["aws-lambda", "DynamoDB"],
+        ),
     ),
 ]
 
@@ -492,5 +610,12 @@ def test_route_extraction(golden: RouteGolden, repos_root: str, llm_config: LLMC
     assert descriptor.source_file == route_file
     assert record.endpoint_count == len(descriptor.endpoints)
 
-    # Golden assertions
+    # Phase 1 assertions (intermediate — catches silent failures early)
+    if golden.phase1 is not None:
+        assert record.code_analysis_obj is not None, (
+            f"[{golden.repo_id}] Phase 1 analysis object not available in run record"
+        )
+        assert_phase1_match(record.code_analysis_obj, golden.phase1, golden.repo_id)
+
+    # Phase 2 assertions (final output)
     assert_endpoints_match(descriptor, golden)

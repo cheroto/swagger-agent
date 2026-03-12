@@ -42,6 +42,38 @@ class DiscoveryManifest(BaseModel):
     base_path: str = ""
 
 
+# --- Code Analysis (Route Extractor Phase 1) ---
+
+
+class EndpointSketch(BaseModel):
+    """Lightweight endpoint identification from Phase 1."""
+    method: str                    # GET, POST, etc.
+    path: str                      # Full path as observed in code
+    handler_name: str              # Function/method name
+
+
+class AuthPattern(BaseModel):
+    """Observed auth mechanism from Phase 1."""
+    mechanism: str                 # e.g. "middleware in handler chain", "decorator", "annotation"
+    indicator: str                 # e.g. "auth.required", "@PreAuthorize", "[Authorize]"
+    scheme_type: str               # "bearer", "apikey", "cookie", "basic", "oauth2", "unknown"
+    applies_to: str                # "all", "per-endpoint", "group"
+
+
+class CodeAnalysis(BaseModel):
+    """Phase 1 output: observations about the route file."""
+    routing_style: str             # How routes are defined
+    path_param_syntax: str         # ":param" or "{param}" or "<param>"
+    base_prefix: str               # Router-level prefix if any
+    auth_patterns: list[AuthPattern]
+    has_auth_imports: bool         # Whether auth-related imports exist
+    auth_inference_notes: str = "" # When no explicit auth patterns: note any hints (middleware groups, comments, naming conventions) suggesting auth is applied externally
+    request_body_style: str        # How bodies are consumed
+    error_handling_notes: str      # How errors are returned
+    import_lines: list[str]        # All import/require lines (raw)
+    endpoints: list[EndpointSketch]
+
+
 # --- Endpoint Descriptor ---
 
 

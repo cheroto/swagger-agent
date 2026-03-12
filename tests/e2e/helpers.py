@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from swagger_agent.models import Endpoint, EndpointDescriptor
+from swagger_agent.models import CodeAnalysis, Endpoint, EndpointDescriptor
 
 
 @dataclass
@@ -25,6 +25,29 @@ class ExpectedEndpoint:
 
 
 @dataclass
+class ExpectedPhase1Endpoint:
+    """Golden expectation for a Phase 1 endpoint sketch."""
+
+    method: str
+    path: str  # Normalized path with {param} style
+    handler_name: str | None = None  # Optional — check if non-None
+
+
+@dataclass
+class Phase1Golden:
+    """Golden data for Phase 1 (code analysis) output."""
+
+    min_endpoints: int
+    endpoints: list[ExpectedPhase1Endpoint] = field(default_factory=list)
+    has_auth_patterns: bool | None = None  # True=must have, False=must be empty, None=don't check
+    has_auth_imports: bool | None = None
+    has_auth_inference_notes: bool | None = None  # True=must be non-empty
+    base_prefix: str | None = None  # Expected base prefix, None=don't check
+    path_param_syntax: str | None = None  # Expected syntax, None=don't check
+    required_import_substrings: list[str] = field(default_factory=list)  # Substrings that must appear in at least one import line
+
+
+@dataclass
 class RouteGolden:
     """Golden data for a route extraction test case."""
 
@@ -35,6 +58,7 @@ class RouteGolden:
     base_path: str
     min_endpoints: int
     endpoints: list[ExpectedEndpoint]
+    phase1: Phase1Golden | None = None  # Optional Phase 1 assertions
 
 
 @dataclass
@@ -57,6 +81,82 @@ class SchemaLoopGolden:
     ref_hints: list[dict]
     min_schemas: int
     expected_schemas: list[ExpectedSchema]
+
+
+def assert_phase1_match(
+    analysis: CodeAnalysis,
+    golden: Phase1Golden,
+    repo_id: str,
+) -> None:
+    """Assert that Phase 1 code analysis matches golden expectations."""
+    sketches = analysis.endpoints
+
+    assert len(sketches) >= golden.min_endpoints, (
+        f"[{repo_id}] Phase 1: expected at least {golden.min_endpoints} endpoint sketches, "
+        f"got {len(sketches)}: {[(s.method, s.path) for s in sketches]}"
+    )
+
+    for expected in golden.endpoints:
+        # For Phase 1, use exact path match (normalized) since sketches
+        # should have the same path format as golden data
+        expected_norm = normalize_path(expected.path)
+
+        match = None
+        for s in sketches:
+            norm = normalize_path(s.path)
+            if s.method.upper() == expected.method.upper() and norm == expected_norm:
+                match = s
+                break
+        assert match is not None, (
+            f"[{repo_id}] Phase 1: expected sketch {expected.method} {expected.path} "
+            f"not found. Got: {[(s.method, normalize_path(s.path)) for s in sketches]}"
+        )
+        if expected.handler_name is not None:
+            assert match.handler_name == expected.handler_name, (
+                f"[{repo_id}] Phase 1: {expected.method} {expected.path} "
+                f"expected handler '{expected.handler_name}', got '{match.handler_name}'"
+            )
+
+    if golden.has_auth_patterns is True:
+        assert len(analysis.auth_patterns) > 0, (
+            f"[{repo_id}] Phase 1: expected auth patterns, got none"
+        )
+    elif golden.has_auth_patterns is False:
+        assert len(analysis.auth_patterns) == 0, (
+            f"[{repo_id}] Phase 1: expected no auth patterns, "
+            f"got: {[(ap.indicator, ap.applies_to) for ap in analysis.auth_patterns]}"
+        )
+
+    if golden.has_auth_imports is not None:
+        assert analysis.has_auth_imports == golden.has_auth_imports, (
+            f"[{repo_id}] Phase 1: expected has_auth_imports={golden.has_auth_imports}, "
+            f"got {analysis.has_auth_imports}"
+        )
+
+    if golden.has_auth_inference_notes is True:
+        assert analysis.auth_inference_notes and len(analysis.auth_inference_notes.strip()) > 0, (
+            f"[{repo_id}] Phase 1: expected non-empty auth_inference_notes, "
+            f"got {analysis.auth_inference_notes!r}"
+        )
+
+    if golden.base_prefix is not None:
+        assert analysis.base_prefix == golden.base_prefix, (
+            f"[{repo_id}] Phase 1: expected base_prefix={golden.base_prefix!r}, "
+            f"got {analysis.base_prefix!r}"
+        )
+
+    if golden.path_param_syntax is not None:
+        assert golden.path_param_syntax in analysis.path_param_syntax, (
+            f"[{repo_id}] Phase 1: expected path_param_syntax containing "
+            f"{golden.path_param_syntax!r}, got {analysis.path_param_syntax!r}"
+        )
+
+    for substring in golden.required_import_substrings:
+        found = any(substring in line for line in analysis.import_lines)
+        assert found, (
+            f"[{repo_id}] Phase 1: no import line contains {substring!r}. "
+            f"Got: {analysis.import_lines}"
+        )
 
 
 def normalize_path(path: str) -> str:
@@ -102,11 +202,12 @@ def assert_endpoints_match(
 
     for expected in golden.endpoints:
         # Build a regex pattern from the expected path
-        # Escape special chars but keep {param} as wildcard
+        # Replace {param} with a pattern that matches {any_param_name} but NOT
+        # literal path segments like "versions"
         pattern = re.escape(expected.path)
-        pattern = re.sub(r"\\{\\w+\\}", r"\\{\\w+\\}", pattern)
-        # Also handle cases where LLM might use different param names
-        pattern = re.sub(r"\\{[^}]+\\}", r"[^/]+", pattern)
+        # Match {word} in the actual path — the LLM might use different param names
+        pattern = re.sub(r"\\{[^}]+\\}", r"\\{\\w+\\}", pattern)
+        pattern = f"^{pattern}$"
 
         ep = find_endpoint(endpoints, expected.method, pattern)
         assert ep is not None, (
