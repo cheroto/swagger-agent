@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 
 import yaml
@@ -103,8 +105,17 @@ def _extract_refs_from_schema(schema: dict) -> set[str]:
     return refs
 
 
+_EMPTY_REF_PLACEHOLDER = {
+    "type": "object",
+    "description": "Empty schema reference",
+    "x-unresolved": True,
+}
+
+
 def _build_ref(name: str) -> dict:
     is_array, inner = _parse_ref_hint(name)
+    if not inner:
+        return dict(_EMPTY_REF_PLACEHOLDER)
     if is_array:
         return {
             "type": "array",
@@ -164,6 +175,164 @@ def _build_operation(ep: Endpoint) -> dict:
     return op
 
 
+def _deduplicate_operation_ids(spec: dict) -> None:
+    """Deduplicate operationIds by prefixing collisions with their first tag."""
+    # Collect all (path, method) → operationId
+    id_to_locations: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for path, methods in spec.get("paths", {}).items():
+        for method, op in methods.items():
+            if isinstance(op, dict) and "operationId" in op:
+                id_to_locations[op["operationId"]].append((path, method))
+
+    # Only fix collisions
+    for op_id, locations in id_to_locations.items():
+        if len(locations) <= 1:
+            continue
+        for path, method in locations:
+            op = spec["paths"][path][method]
+            tags = op.get("tags", [])
+            tag = tags[0] if tags else ""
+            new_id = f"{tag}_{op_id}" if tag else f"{path.strip('/').replace('/', '_')}_{op_id}"
+            op["operationId"] = new_id
+
+        # Check for secondary collisions (unlikely but handle)
+        seen: set[str] = set()
+        for path, method in locations:
+            op = spec["paths"][path][method]
+            if op["operationId"] in seen:
+                h = hashlib.md5(f"{path}:{method}".encode()).hexdigest()[:6]
+                op["operationId"] = f"{op['operationId']}_{h}"
+            seen.add(op["operationId"])
+
+
+def _fix_ref_siblings(schema: object) -> object:
+    """Wrap $ref + sibling keys with allOf (OpenAPI 3.0 requires it)."""
+    if isinstance(schema, dict):
+        if "$ref" in schema and len(schema) > 1:
+            ref = schema.pop("$ref")
+            schema["allOf"] = [{"$ref": ref}]
+            # Recurse remaining values
+            for k, v in schema.items():
+                if k != "allOf":
+                    schema[k] = _fix_ref_siblings(v)
+        else:
+            for k, v in schema.items():
+                schema[k] = _fix_ref_siblings(v)
+    elif isinstance(schema, list):
+        for i, item in enumerate(schema):
+            schema[i] = _fix_ref_siblings(item)
+    return schema
+
+
+def _break_ref_cycles(spec: dict) -> None:
+    """Detect and break circular $ref chains in components/schemas."""
+    schemas = spec.get("components", {}).get("schemas", {})
+    if not schemas:
+        return
+
+    # Build adjacency: schema_name → set of (referenced_name, is_array_context)
+    graph: dict[str, set[str]] = {}
+    array_edges: set[tuple[str, str]] = set()
+    for name, schema in schemas.items():
+        refs = _extract_refs_from_schema(schema)
+        graph[name] = refs
+        # Detect which refs are inside array items
+        _mark_array_edges(name, schema, array_edges)
+
+    # DFS cycle detection — find all back edges
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color: dict[str, int] = {n: WHITE for n in schemas}
+    parent: dict[str, str | None] = {n: None for n in schemas}
+    back_edges: list[tuple[str, str]] = []  # (from, to) where to is ancestor
+
+    def dfs(u: str) -> None:
+        color[u] = GRAY
+        for v in graph.get(u, set()):
+            if v not in color:
+                continue
+            if color[v] == WHITE:
+                parent[v] = u
+                dfs(v)
+            elif color[v] == GRAY:
+                back_edges.append((u, v))
+        color[u] = BLACK
+
+    for node in schemas:
+        if color[node] == WHITE:
+            dfs(node)
+
+    # Break each back edge
+    for src, tgt in back_edges:
+        # Prefer cutting array-context edges
+        if (src, tgt) in array_edges:
+            _replace_ref_in_schema(schemas[src], tgt)
+        elif (tgt, src) in array_edges:
+            _replace_ref_in_schema(schemas[tgt], src)
+            # Also update graph
+        else:
+            _replace_ref_in_schema(schemas[src], tgt)
+
+
+def _mark_array_edges(schema_name: str, schema: object, array_edges: set[tuple[str, str]]) -> None:
+    """Track which $ref edges are inside array items."""
+    prefix = "#/components/schemas/"
+    if isinstance(schema, dict):
+        if schema.get("type") == "array" and "items" in schema:
+            items = schema["items"]
+            if isinstance(items, dict) and "$ref" in items:
+                ref = items["$ref"]
+                if isinstance(ref, str) and ref.startswith(prefix):
+                    array_edges.add((schema_name, ref[len(prefix):]))
+            _mark_array_edges(schema_name, items, array_edges)
+        else:
+            for v in schema.values():
+                _mark_array_edges(schema_name, v, array_edges)
+    elif isinstance(schema, list):
+        for item in schema:
+            _mark_array_edges(schema_name, item, array_edges)
+
+
+def _replace_ref_in_schema(schema: dict, target_name: str) -> None:
+    """Replace $ref to target_name with an inline circular-ref stub."""
+    prefix = "#/components/schemas/"
+    ref_value = f"{prefix}{target_name}"
+
+    def _walk(obj: object) -> None:
+        if isinstance(obj, dict):
+            # Check allOf wrappers too
+            if "allOf" in obj and isinstance(obj["allOf"], list):
+                for i, item in enumerate(obj["allOf"]):
+                    if isinstance(item, dict) and item.get("$ref") == ref_value:
+                        obj["allOf"][i] = {
+                            "type": "object",
+                            "description": f"Circular reference to {target_name}",
+                            "x-circular-ref": ref_value,
+                        }
+                        return
+            if obj.get("$ref") == ref_value:
+                obj.pop("$ref")
+                obj["type"] = "object"
+                obj["description"] = f"Circular reference to {target_name}"
+                obj["x-circular-ref"] = ref_value
+                return
+            if obj.get("type") == "array" and "items" in obj:
+                items = obj["items"]
+                if isinstance(items, dict) and items.get("$ref") == ref_value:
+                    obj["items"] = {
+                        "type": "object",
+                        "description": f"Circular reference to {target_name}",
+                        "x-circular-ref": ref_value,
+                    }
+                    return
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+
+    _walk(schema)
+
+
 def assemble_spec(
     manifest: DiscoveryManifest,
     descriptors: list[EndpointDescriptor],
@@ -216,26 +385,28 @@ def assemble_spec(
 
             spec["paths"][path_key][method] = _build_operation(ep)
 
-            # Track referenced schema names (unwrap array wrappers)
+            # Track referenced schema names (unwrap array wrappers, skip empty)
             if ep.request_body and ep.request_body.schema_ref:
                 _, inner = _parse_ref_hint(ep.request_body.schema_ref.ref_hint)
-                referenced_schemas.add(inner)
+                if inner:
+                    referenced_schemas.add(inner)
             for resp in ep.responses:
                 if resp.schema_ref:
                     _, inner = _parse_ref_hint(resp.schema_ref.ref_hint)
-                    referenced_schemas.add(inner)
+                    if inner:
+                        referenced_schemas.add(inner)
 
     # Only emit schemas that are referenced by endpoints (directly or transitively via $ref)
     def _collect_transitive_refs(names: set[str], all_schemas: dict[str, dict]) -> set[str]:
         """Walk $ref chains to find all transitively referenced schemas."""
-        result = set(names)
-        frontier = set(names)
+        result = {n for n in names if n}  # skip empty names
+        frontier = set(result)
         while frontier:
             next_frontier: set[str] = set()
             for n in frontier:
                 schema = all_schemas.get(n, {})
                 for ref in _extract_refs_from_schema(schema):
-                    if ref not in result:
+                    if ref and ref not in result:
                         result.add(ref)
                         next_frontier.add(ref)
             frontier = next_frontier
@@ -255,6 +426,15 @@ def assemble_spec(
                 ),
                 "x-unresolved": True,
             }
+
+    # Post-processing passes (order matters)
+    # 1. Fix $ref + sibling keys (must come before cycle detection)
+    if spec.get("components", {}).get("schemas"):
+        _fix_ref_siblings(spec["components"]["schemas"])
+    # 2. Break circular $ref chains
+    _break_ref_cycles(spec)
+    # 3. Deduplicate operationIds
+    _deduplicate_operation_ids(spec)
 
     # Remove empty schemas
     if not spec["components"]["schemas"]:
