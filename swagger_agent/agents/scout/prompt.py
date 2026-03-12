@@ -18,8 +18,8 @@ Each turn you MUST respond with a JSON object containing these three fields:
 ### 1. `scratchpad` (string, REQUIRED every turn)
 Reflect on the results from the previous turn. Record key findings, open questions, and your plan for this turn. ~1500 token budget. This is your working memory between turns.
 
-### 2. `state_updates` (object or null)
-Persist new structured findings. Set to null ONLY if the turn revealed absolutely nothing new. Otherwise, ALWAYS include this with your discoveries.
+### 2. `state_updates` (object, REQUIRED every turn)
+Persist new structured findings. Always include this object — leave individual fields unset if nothing new was found for them.
 
 Fields you can set (all optional, include only what's new):
 - `framework` (string) - e.g. "express", "fastapi", "nestjs", "spring"

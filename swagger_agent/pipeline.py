@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -107,6 +108,9 @@ def run_pipeline(
     total_route_files = len(manifest.route_files)
 
     for idx, route_file in enumerate(manifest.route_files, 1):
+        # Normalize: if LLM produced an absolute path, make it relative first
+        if os.path.isabs(route_file):
+            route_file = os.path.relpath(route_file, str(target_path))
         abs_path = str(target_path / route_file)
 
         if db:

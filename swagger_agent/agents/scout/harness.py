@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -73,11 +74,11 @@ class ScoutTurnResponse(BaseModel):
             "~1500 token budget. This is your working memory between turns."
         ),
     )
-    state_updates: StateUpdates | None = Field(
-        default=None,
+    state_updates: StateUpdates = Field(
+        default_factory=StateUpdates,
         description=(
             "Persist new findings into structured state. Include completed_tasks "
-            "to check off finished items. Set to null if this turn revealed nothing new. "
+            "to check off finished items. "
             "Lists are appended (deduped), scalars overwrite."
         ),
     )
@@ -182,15 +183,56 @@ class ScoutRunRecord:
 # --- State Management ---
 
 
-def apply_state_update(state: ScoutWorkingState, updates: StateUpdates) -> ScoutWorkingState:
+# Tasks that require non-empty data before they can be marked complete.
+# Maps task name → list of state fields that must be non-empty (truthy).
+_TASK_COMPLETION_GUARDS: dict[str, list[str]] = {
+    "find_route_files": ["route_files"],
+    "identify_framework": ["framework"],
+}
+
+
+def _normalize_path(path: str, target_dir: str) -> str:
+    """Normalize a path to be relative to target_dir.
+
+    Handles cases where the LLM includes the target_dir prefix,
+    uses absolute paths, or includes ./ prefixes.
+    """
+    # Strip leading/trailing whitespace
+    path = path.strip()
+    # Normalize the path (resolve .., ., double slashes)
+    path = os.path.normpath(path)
+    # If it's an absolute path, make it relative to target_dir
+    abs_target = os.path.normpath(os.path.abspath(target_dir))
+    abs_path = os.path.normpath(os.path.abspath(path)) if os.path.isabs(path) else None
+    if abs_path and abs_path.startswith(abs_target + os.sep):
+        return os.path.relpath(abs_path, abs_target)
+    # If it starts with the target_dir as a relative prefix, strip it
+    norm_target = os.path.normpath(target_dir)
+    if path.startswith(norm_target + os.sep):
+        return os.path.relpath(path, norm_target)
+    # Strip leading slash (shouldn't happen after normpath, but defensive)
+    return path.lstrip(os.sep)
+
+
+def apply_state_update(
+    state: ScoutWorkingState,
+    updates: StateUpdates,
+    target_dir: str,
+) -> tuple[ScoutWorkingState, list[str]]:
     """Merge LLM-provided updates into the working state.
 
     Lists append (deduped), scalars overwrite. completed_tasks are removed
-    from remaining_tasks.
+    from remaining_tasks — but only if the corresponding data fields have
+    been populated (guards prevent marking a task done without evidence).
+
+    Returns (new_state, rejections) where rejections is a list of
+    human-readable messages for guard failures (surfaced to the LLM).
     """
     data = state.model_dump(by_alias=True)
     updates_dict = updates.model_dump(exclude_none=True)
+    rejections: list[str] = []
 
+    # First, merge data fields (before checking guards)
     for key, value in updates_dict.items():
         if key == "completed_tasks":
             continue
@@ -201,19 +243,45 @@ def apply_state_update(state: ScoutWorkingState, updates: StateUpdates) -> Scout
         if isinstance(current, list) and isinstance(value, list):
             seen = set(current)
             for item in value:
+                # Normalize file paths in route_files
+                if key == "route_files":
+                    item = _normalize_path(item, target_dir)
                 if item not in seen:
                     current.append(item)
                     seen.add(item)
         else:
             data[key] = value
 
+    # Then, remove completed tasks — but only if guards pass
     completed = updates.completed_tasks
     if completed:
+        actually_completed = []
+        for task in completed:
+            required_fields = _TASK_COMPLETION_GUARDS.get(task)
+            if required_fields is None:
+                # No guard — accept unconditionally
+                actually_completed.append(task)
+                continue
+            # Check all required fields are non-empty
+            if all(data.get(f) for f in required_fields):
+                actually_completed.append(task)
+            else:
+                msg = (
+                    f"REJECTED: '{task}' cannot be marked complete — "
+                    f"required fields {required_fields} are empty. "
+                    f"You must include {required_fields} in state_updates before marking this task complete."
+                )
+                rejections.append(msg)
+                logger.warning(
+                    "Rejected completion of '%s': required fields %s are empty",
+                    task, required_fields,
+                )
+
         data["remaining_tasks"] = [
-            t for t in data.get("remaining_tasks", []) if t not in completed
+            t for t in data.get("remaining_tasks", []) if t not in actually_completed
         ]
 
-    return ScoutWorkingState.model_validate(data)
+    return ScoutWorkingState.model_validate(data), rejections
 
 
 def state_to_manifest(state: ScoutWorkingState) -> DiscoveryManifest:
@@ -364,15 +432,25 @@ def run_scout(
         state.scratchpad = turn_response.scratchpad
         event_handler.on_scratchpad_update(turn, state.scratchpad)
 
-        # 2. Apply state updates (structurally enforced field, not a tool call)
-        state_updates_dict = None
-        if turn_response.state_updates is not None:
-            state = apply_state_update(state, turn_response.state_updates)
-            state_updates_dict = turn_response.state_updates.model_dump(exclude_none=True)
-            event_handler.on_state_update(turn, turn_response.state_updates, state.remaining_tasks)
+        # 2. Apply state updates (structurally enforced — always present)
+        state, rejections = apply_state_update(
+            state, turn_response.state_updates, target_dir,
+        )
+        state_updates_dict = turn_response.state_updates.model_dump(exclude_none=True)
+        event_handler.on_state_update(turn, turn_response.state_updates, state.remaining_tasks)
 
         # 3. Execute actions (exploration tools + write_artifact only)
         last_action_results = []
+
+        # Surface guard rejections so the LLM can self-correct
+        for rejection_msg in rejections:
+            last_action_results.append({
+                "tool": "state_update",
+                "args": {},
+                "args_summary": "guard",
+                "result": rejection_msg,
+                "summary": "guard rejection",
+            })
         turn_action_records: list[dict] = []
 
         for action in turn_response.actions:
