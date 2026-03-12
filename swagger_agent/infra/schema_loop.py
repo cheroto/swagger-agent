@@ -31,6 +31,7 @@ import json
 import os
 import sys
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from rich.console import Console
@@ -145,12 +146,17 @@ def run_schema_loop(
         round_new_schemas: dict[str, dict] = {}
         round_items = [queue.popleft() for _ in range(batch_size)]
 
+        # Phase A: Resolve all type names to file paths (deterministic, fast)
+        # Collect items that need LLM extraction
+        extraction_tasks: list[tuple[str, Path, dict[str, dict]]] = []  # (name, path, known)
+
+        # Snapshot all_schemas for building known_schemas context in this round
+        schemas_snapshot = dict(all_schemas)
+
         for schema_name, import_source in round_items:
             if schema_name in all_schemas:
                 continue
 
-            # Two-tier resolution: ctags (primary) → grep (fallback)
-            # import_source used only for disambiguation, not standalone lookup
             file_path = resolve_type(
                 schema_name, import_source, ctags_index, project_root,
             )
@@ -178,43 +184,61 @@ def run_schema_loop(
                 console.print(f"  [bold]{schema_name}[/bold] → {file_path.relative_to(project_root)}")
             _emit("resolving", name=schema_name, file=str(file_path))
 
-            # Build known_schemas context: schemas whose names appear in this file
+            # Build known_schemas context from the round snapshot
             file_text = file_path.read_text(encoding="utf-8", errors="replace")
             known_schemas = {
-                n: all_schemas[n] for n in all_schemas
-                if n in file_text and not all_schemas[n].get("x-unresolved")
+                n: schemas_snapshot[n] for n in schemas_snapshot
+                if n in file_text and not schemas_snapshot[n].get("x-unresolved")
             }
 
-            # Run schema extractor
-            context = SchemaExtractorContext(
+            extraction_tasks.append((schema_name, file_path, known_schemas))
+
+        # Phase B: Run LLM extraction (parallelizable within the round)
+        def _extract_one(
+            schema_name: str, file_path: Path, known: dict[str, dict],
+        ) -> tuple[str, Path, SchemaDescriptor | None, object | None, str | None]:
+            ctx = SchemaExtractorContext(
                 framework=framework,
                 target_file=str(file_path),
-                known_schemas=known_schemas,
+                known_schemas=known,
             )
-
             try:
                 descriptor, record = run_schema_extractor(
-                    str(file_path), context, config=config,
+                    str(file_path), ctx, config=config,
                 )
-                if not quiet:
-                    console.print(
-                        f"    Extracted {record.schema_count} schema(s) in "
-                        f"{record.duration_ms:.0f}ms"
-                    )
-                _emit("extracted", file=str(file_path), count=record.schema_count,
-                      duration_ms=record.duration_ms,
-                      schema_names=list(descriptor.schemas.keys()))
-                round_new_schemas.update(descriptor.schemas)
-                extracted_files.add(file_key)
+                return (schema_name, file_path, descriptor, record, None)
             except Exception as e:
-                if not quiet:
-                    console.print(f"    [red]Extraction failed:[/red] {e}")
-                _emit("extract_failed", name=schema_name, error=str(e))
-                all_schemas[schema_name] = {
-                    "type": "object",
-                    "description": f"Schema extraction failed: {e}",
-                    "x-unresolved": True,
-                }
+                return (schema_name, file_path, None, None, str(e))
+
+        workers = config.max_workers_schema
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(_extract_one, name, fpath, known): name
+                for name, fpath, known in extraction_tasks
+            }
+            for future in as_completed(futures):
+                schema_name, file_path, descriptor, record, error = future.result()
+                if error:
+                    if not quiet:
+                        console.print(f"    [red]Extraction failed:[/red] {error}")
+                    _emit("extract_failed", name=schema_name, error=error)
+                    all_schemas[schema_name] = {
+                        "type": "object",
+                        "description": f"Schema extraction failed: {error}",
+                        "x-unresolved": True,
+                    }
+                else:
+                    if not quiet:
+                        console.print(
+                            f"    Extracted {record.schema_count} schema(s) in "
+                            f"{record.duration_ms:.0f}ms"
+                        )
+                    _emit("extracted", name=schema_name, file=str(file_path),
+                          count=record.schema_count,
+                          duration_ms=record.duration_ms,
+                          schema_names=list(descriptor.schemas.keys()))
+                    round_new_schemas.update(descriptor.schemas)
+                    extracted_files.add(str(file_path))
 
         # Merge new schemas
         all_schemas.update(round_new_schemas)

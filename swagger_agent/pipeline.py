@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -128,8 +129,10 @@ def run_pipeline(
     descriptors: list[EndpointDescriptor] = []
     total_route_files = len(manifest.route_files)
 
-    for idx, route_file in enumerate(manifest.route_files, 1):
-        # Normalize: if LLM produced an absolute path, make it relative first
+    def _extract_one_route(
+        idx: int, route_file: str,
+    ) -> tuple[int, str, EndpointDescriptor | None, object | None, str | None]:
+        """Worker: extract endpoints from a single route file. Returns (idx, file, descriptor, record, error)."""
         if os.path.isabs(route_file):
             route_file = os.path.relpath(route_file, str(target_path))
         abs_path = str(target_path / route_file)
@@ -139,28 +142,50 @@ def run_pipeline(
         else:
             console.print(f"  Extracting: [bold]{route_file}[/bold]")
 
-        context = RouteExtractorContext(
+        ctx = RouteExtractorContext(
             framework=manifest.framework,
             base_path=manifest.base_path,
             target_file=abs_path,
         )
-
         try:
-            descriptor, record = run_route_extractor(abs_path, context, config=config)
-            descriptors.append(descriptor)
-            if db:
-                db.route_complete(route_file, record.endpoint_count, record.duration_ms)
-                db.route_endpoints_discovered(descriptor)
-            else:
-                console.print(
-                    f"    {record.endpoint_count} endpoint(s) in {record.duration_ms:.0f}ms"
-                )
+            descriptor, record = run_route_extractor(abs_path, ctx, config=config)
+            return (idx, route_file, descriptor, record, None)
         except Exception as e:
-            if db:
-                db.route_failed(route_file, str(e))
+            return (idx, route_file, None, None, str(e))
+
+    workers = config.max_workers_route
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(_extract_one_route, idx, rf): idx
+            for idx, rf in enumerate(manifest.route_files, 1)
+        }
+        # Collect results keyed by index for deterministic ordering
+        results_by_idx: dict[int, tuple] = {}
+        for future in as_completed(futures):
+            idx, route_file, descriptor, record, error = future.result()
+            results_by_idx[idx] = (route_file, descriptor, record, error)
+
+            if error:
+                if db:
+                    db.route_failed(route_file, error)
+                else:
+                    console.print(f"    [red]Failed:[/red] {error}")
             else:
-                console.print(f"    [red]Failed:[/red] {e}")
-            result.failed_routes.append((route_file, str(e)))
+                if db:
+                    db.route_complete(route_file, record.endpoint_count, record.duration_ms)
+                    db.route_endpoints_discovered(descriptor)
+                else:
+                    console.print(
+                        f"    {record.endpoint_count} endpoint(s) in {record.duration_ms:.0f}ms"
+                    )
+
+    # Append in original file order for deterministic spec output
+    for idx in sorted(results_by_idx):
+        route_file, descriptor, record, error = results_by_idx[idx]
+        if error:
+            result.failed_routes.append((route_file, error))
+        else:
+            descriptors.append(descriptor)
 
     result.descriptors = descriptors
     result.timings["route_extraction"] = (time.monotonic() - t0) * 1000

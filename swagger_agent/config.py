@@ -27,6 +27,10 @@ class LLMConfig(BaseSettings):
     llm_base_url_schema_extractor: str = ""
     llm_base_url_orchestrator: str = ""
 
+    # Concurrency settings (1 = sequential, current behavior)
+    max_workers_route: int = 1
+    max_workers_schema: int = 1
+
     def for_agent(self, agent: str) -> tuple[str, str]:
         """Return (base_url, model) for a given agent, falling back to defaults."""
         agent_key = agent.lower().replace(" ", "_")

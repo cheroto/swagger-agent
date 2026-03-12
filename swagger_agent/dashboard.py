@@ -176,8 +176,7 @@ class PipelineDashboard(ScoutEventHandler):
         self._scout_findings: dict[str, str] = {}
 
         # Route extraction state
-        self._route_current = ""
-        self._route_index = 0
+        self._routes_in_flight: set[str] = set()
         self._route_total = 0
         self._route_endpoints_total = 0
         self._route_files_done = 0
@@ -185,7 +184,7 @@ class PipelineDashboard(ScoutEventHandler):
         # Schema state
         self._schema_round = 0
         self._schema_pending = 0
-        self._schema_current = ""
+        self._schemas_in_flight: set[str] = set()
         self._schema_resolved = 0
         self._schema_unresolved = 0
 
@@ -291,16 +290,18 @@ class PipelineDashboard(ScoutEventHandler):
     # ── Route extraction events ───────────────────────────────────────────
 
     def route_start(self, file: str, index: int, total: int) -> None:
-        self._route_current = file
-        self._route_index = index
-        self._route_total = total
+        with self._lock:
+            self._routes_in_flight.add(file)
+            self._route_total = total
         short = file.rsplit("/", 1)[-1]
         self._log("ROUTE", f"Extracting [bold]{short}[/bold] ({index}/{total})", "yellow")
         self._refresh()
 
     def route_complete(self, file: str, endpoints: int, duration_ms: float) -> None:
-        self._route_endpoints_total += endpoints
-        self._route_files_done += 1
+        with self._lock:
+            self._route_endpoints_total += endpoints
+            self._route_files_done += 1
+            self._routes_in_flight.discard(file)
         short = file.rsplit("/", 1)[-1]
         self._log("ROUTE", f"[green]✓[/green] {short} → {endpoints} endpoint(s) ({duration_ms:.0f}ms)", "green")
         self._refresh()
@@ -311,16 +312,19 @@ class PipelineDashboard(ScoutEventHandler):
         Called by pipeline after each successful route extraction.
         ``descriptor`` is an EndpointDescriptor pydantic model.
         """
-        for ep in descriptor.endpoints:
-            sec = ", ".join(ep.security) if ep.security else None
-            self._spec_endpoints.append((ep.method, ep.path, sec))
-            if ep.security:
-                for s in ep.security:
-                    self._spec_security_schemes.add(s)
+        with self._lock:
+            for ep in descriptor.endpoints:
+                sec = ", ".join(ep.security) if ep.security else None
+                self._spec_endpoints.append((ep.method, ep.path, sec))
+                if ep.security:
+                    for s in ep.security:
+                        self._spec_security_schemes.add(s)
         self._refresh()
 
     def route_failed(self, file: str, error: str) -> None:
-        self._failed_routes += 1
+        with self._lock:
+            self._failed_routes += 1
+            self._routes_in_flight.discard(file)
         short = file.rsplit("/", 1)[-1]
         self._log("ROUTE", f"[red]✗[/red] {short}: {error}", "red")
         self._refresh()
@@ -331,42 +335,50 @@ class PipelineDashboard(ScoutEventHandler):
         if event == "ctags_built":
             self._log("SCHEMA", f"Indexed {kwargs.get('count', 0)} type definitions", "dim")
         elif event == "round_start":
-            self._schema_round = kwargs.get("round", 0)
-            self._schema_pending = kwargs.get("pending", 0)
+            with self._lock:
+                self._schema_round = kwargs.get("round", 0)
+                self._schema_pending = kwargs.get("pending", 0)
             self._log("SCHEMA", f"Round {self._schema_round} ({self._schema_pending} pending)", "yellow")
         elif event == "already_extracted":
             self._log("SCHEMA", f"[dim]{kwargs.get('file', '?')} already extracted[/dim]", "dim")
         elif event == "resolving":
             name = kwargs.get("name", "?")
             file = kwargs.get("file")
-            self._schema_current = name
+            with self._lock:
+                self._schemas_in_flight.add(name)
             if file:
                 short = str(file).rsplit("/", 1)[-1]
                 self._log("SCHEMA", f"{name} → [bold]{short}[/bold]", "cyan")
             else:
                 self._log("SCHEMA", f"[red]Could not resolve[/red] {name}", "red")
-                self._schema_unresolved += 1
-                if name not in self._spec_unresolved_schemas:
-                    self._spec_unresolved_schemas.append(name)
+                with self._lock:
+                    self._schema_unresolved += 1
+                    self._schemas_in_flight.discard(name)
+                    if name not in self._spec_unresolved_schemas:
+                        self._spec_unresolved_schemas.append(name)
         elif event == "extracted":
             count = kwargs.get("count", 0)
             duration = kwargs.get("duration_ms", 0)
-            self._schema_resolved += count
+            name = kwargs.get("name", "")
             file = kwargs.get("file", "")
             short = str(file).rsplit("/", 1)[-1]
+            with self._lock:
+                self._schema_resolved += count
+                self._schemas_in_flight.discard(name)
+                schema_names = kwargs.get("schema_names", [])
+                for sn in schema_names:
+                    if sn not in self._spec_schema_names:
+                        self._spec_schema_names.append(sn)
             self._log("SCHEMA", f"[green]✓[/green] {short} → {count} schema(s) ({duration:.0f}ms)", "green")
-            # Track individual schema names
-            schema_names = kwargs.get("schema_names", [])
-            for sn in schema_names:
-                if sn not in self._spec_schema_names:
-                    self._spec_schema_names.append(sn)
         elif event == "extract_failed":
             name = kwargs.get("name", "?")
-            self._schema_unresolved += 1
-            self._failed_schemas += 1
+            with self._lock:
+                self._schema_unresolved += 1
+                self._failed_schemas += 1
+                self._schemas_in_flight.discard(name)
+                if name not in self._spec_unresolved_schemas:
+                    self._spec_unresolved_schemas.append(name)
             self._log("SCHEMA", f"[red]✗[/red] {name}: {kwargs.get('error', '')}", "red")
-            if name not in self._spec_unresolved_schemas:
-                self._spec_unresolved_schemas.append(name)
         elif event == "new_refs":
             refs = kwargs.get("refs", [])
             self._log("SCHEMA", f"New $refs: {', '.join(sorted(refs))}", "cyan")
@@ -579,8 +591,10 @@ class PipelineDashboard(ScoutEventHandler):
                     parts.append(f"  [dim]○[/dim] {short}")
 
         elif self._current_phase == 2:
-            done = self._route_files_done
-            total = self._route_total
+            with self._lock:
+                done = self._route_files_done
+                total = self._route_total
+                in_flight = set(self._routes_in_flight)
             parts.append("[bold]Route Extraction[/bold]")
             parts.append("")
             if total:
@@ -588,16 +602,24 @@ class PipelineDashboard(ScoutEventHandler):
                 filled = int((done / total) * bar_len)
                 bar = f"[green]{'█' * filled}[/green][dim]{'░' * (bar_len - filled)}[/dim]"
                 parts.append(f"  Files  {bar}  {done}/{total}")
-            if self._route_current:
-                short = self._route_current.rsplit("/", 1)[-1]
+            if len(in_flight) > 1:
+                parts.append(f"  [yellow]►[/yellow] {len(in_flight)} files in flight")
+            elif in_flight:
+                short = next(iter(in_flight)).rsplit("/", 1)[-1]
                 parts.append(f"  [yellow]►[/yellow] {short}")
 
         elif self._current_phase == 3:
+            with self._lock:
+                schema_round = self._schema_round
+                schema_pending = self._schema_pending
+                in_flight = set(self._schemas_in_flight)
             parts.append("[bold]Schema Resolution[/bold]")
             parts.append("")
-            parts.append(f"  Round [bold]{self._schema_round}[/bold]  │  Pending [bold]{self._schema_pending}[/bold]")
-            if self._schema_current:
-                parts.append(f"  [yellow]►[/yellow] {self._schema_current}")
+            parts.append(f"  Round [bold]{schema_round}[/bold]  │  Pending [bold]{schema_pending}[/bold]")
+            if len(in_flight) > 1:
+                parts.append(f"  [yellow]►[/yellow] {len(in_flight)} schemas in flight")
+            elif in_flight:
+                parts.append(f"  [yellow]►[/yellow] {next(iter(in_flight))}")
 
         elif self._current_phase == 4:
             parts.append("[bold]Assembly[/bold]")
