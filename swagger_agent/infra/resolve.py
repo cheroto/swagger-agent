@@ -28,8 +28,10 @@ class CtagsEntry:
 # Kinds that represent type definitions worth resolving
 _RELEVANT_KINDS = frozenset({
     "class", "interface", "struct", "enum", "type", "alias",
-    "record", "trait",
+    "record", "trait", "model",
 })
+
+from swagger_agent.infra.ctags_patterns import CUSTOM_CTAGS_PATTERNS
 
 # Directories to exclude from ctags and grep
 _EXCLUDE_DIRS = [
@@ -84,6 +86,12 @@ def build_ctags_index(project_root: Path) -> dict[str, list[CtagsEntry]]:
     cmd = [
         ctags_bin, "--output-format=json", "--fields=+n", "-R",
     ]
+    # Add custom kind definitions and regex patterns for framework-specific
+    # model registrations (mongoose.model, sequelize.define, etc.)
+    for kinddef, regex in CUSTOM_CTAGS_PATTERNS:
+        if kinddef is not None:
+            cmd.append(kinddef)
+        cmd.append(regex)
     for d in _EXCLUDE_DIRS:
         cmd.append(f"--exclude={d}")
     for p in _EXCLUDE_PATTERNS:
