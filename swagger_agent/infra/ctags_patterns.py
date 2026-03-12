@@ -39,10 +39,12 @@ def _kinddef(lang: str) -> str:
 _JS_KINDDEF = _kinddef("JavaScript")
 
 _JS_PATTERNS: list[tuple[str | None, str]] = [
-    # Mongoose: mongoose.model('User', schema)
+    # Mongoose: mongoose.model('User', schema) — require comma after name to
+    # match only the 2-arg registration form, not the 1-arg retrieval form
+    # (mongoose.model('User') without comma).
     (
         _JS_KINDDEF,
-        rf"--regex-JavaScript=/mongoose\.model\({_Q}([^{_SQ}{_DQ}]+){_Q}/\1/d/",
+        rf"--regex-JavaScript=/mongoose\.model\({_Q}([^{_SQ}{_DQ}]+){_Q}[[:space:]]*,/\1/d/",
     ),
     # Sequelize: sequelize.define('user', { ... })
     (
@@ -77,10 +79,10 @@ _JS_PATTERNS: list[tuple[str | None, str]] = [
 _TS_KINDDEF = _kinddef("TypeScript")
 
 _TS_PATTERNS: list[tuple[str | None, str]] = [
-    # Mongoose: mongoose.model('User', schema)
+    # Mongoose: mongoose.model('User', schema) — require comma (see JS comment)
     (
         _TS_KINDDEF,
-        rf"--regex-TypeScript=/mongoose\.model\({_Q}([^{_SQ}{_DQ}]+){_Q}/\1/d/",
+        rf"--regex-TypeScript=/mongoose\.model\({_Q}([^{_SQ}{_DQ}]+){_Q}[[:space:]]*,/\1/d/",
     ),
     # Sequelize: sequelize.define('user', { ... })
     (
