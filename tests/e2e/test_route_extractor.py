@@ -35,7 +35,7 @@ from .helpers import (
 
 ROUTE_GOLDEN: list[RouteGolden] = [
     # -----------------------------------------------------------------------
-    # 1. rest-api-node — Express.js (private user routes, JWT auth)
+    # 1a. rest-api-node — Express.js (private user routes, JWT auth)
     # Source: src/routes/private/user.js
     # Routes use consign; private routes have JWT Bearer middleware.
     # Code: src.put("/users/update/:id", ...), src.delete("/users/delete/:id", ...)
@@ -74,6 +74,175 @@ ROUTE_GOLDEN: list[RouteGolden] = [
             ],
             has_auth_patterns=True,
             path_param_syntax=":",  # colon syntax — LLM may say ":param", ":id", etc.
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # 1b. rest-api-node — Express.js (private project routes, JWT auth)
+    # Source: src/routes/private/project.js
+    # 3 endpoints: POST create, PUT update, DELETE by id — all require JWT.
+    # JSDoc has @swagger with security: [authorization: []]
+    # References Project schema via $ref in JSDoc.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="rest-api-node-private-project",
+        repo_dir="rest-api-node",
+        route_file="src/routes/private/project.js",
+        framework="express",
+        base_path="",
+        min_endpoints=3,
+        endpoints=[
+            ExpectedEndpoint(
+                method="POST",
+                path="/projects/create",
+                has_auth=True,
+                has_request_body=True,
+                min_responses=2,
+            ),
+            ExpectedEndpoint(
+                method="PUT",
+                path="/projects/update/{id}",
+                has_auth=True,
+                has_request_body=True,
+                param_names=["id"],
+                min_responses=2,
+            ),
+            ExpectedEndpoint(
+                method="DELETE",
+                path="/projects/delete/{id}",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["id"],
+                min_responses=2,
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=3,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="POST", path="/projects/create"),
+                ExpectedPhase1Endpoint(method="PUT", path="/projects/update/{id}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/projects/delete/{id}"),
+            ],
+            has_auth_patterns=True,
+            path_param_syntax=":",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # 1c. rest-api-node — Express.js (public project routes, no auth)
+    # Source: src/routes/public/project.js
+    # 2 endpoints: GET /projects (list), GET /projects/select/:id
+    # Both public (no auth). Response schemas reference Project.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="rest-api-node-public-project",
+        repo_dir="rest-api-node",
+        route_file="src/routes/public/project.js",
+        framework="express",
+        base_path="",
+        min_endpoints=2,
+        endpoints=[
+            ExpectedEndpoint(
+                method="GET",
+                path="/projects",
+                has_auth=False,
+                has_request_body=False,
+            ),
+            ExpectedEndpoint(
+                method="GET",
+                path="/projects/select/{id}",
+                has_auth=False,
+                has_request_body=False,
+                param_names=["id"],
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=2,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/projects"),
+                ExpectedPhase1Endpoint(method="GET", path="/projects/select/{id}"),
+            ],
+            has_auth_patterns=False,
+            path_param_syntax=":",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # 1d. rest-api-node — Express.js (public user routes, no auth)
+    # Source: src/routes/public/user.js
+    # 3 endpoints: POST /users/create, GET /users, GET /users/select/:id
+    # All public (no auth). JSDoc references User schema.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="rest-api-node-public-user",
+        repo_dir="rest-api-node",
+        route_file="src/routes/public/user.js",
+        framework="express",
+        base_path="",
+        min_endpoints=3,
+        endpoints=[
+            ExpectedEndpoint(
+                method="POST",
+                path="/users/create",
+                has_auth=False,
+                has_request_body=True,
+            ),
+            ExpectedEndpoint(
+                method="GET",
+                path="/users",
+                has_auth=False,
+                has_request_body=False,
+            ),
+            ExpectedEndpoint(
+                method="GET",
+                path="/users/select/{id}",
+                has_auth=False,
+                has_request_body=False,
+                param_names=["id"],
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=3,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="POST", path="/users/create"),
+                ExpectedPhase1Endpoint(method="GET", path="/users"),
+                ExpectedPhase1Endpoint(method="GET", path="/users/select/{id}"),
+            ],
+            has_auth_patterns=False,
+            path_param_syntax=":",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # 1e. rest-api-node — Express.js (service health routes, no auth)
+    # Source: src/routes/public/service.js
+    # 2 endpoints: GET /liveness_check, GET /readiness_check
+    # Inline handlers (no controller import). No auth, no params, no body.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="rest-api-node-service",
+        repo_dir="rest-api-node",
+        route_file="src/routes/public/service.js",
+        framework="express",
+        base_path="",
+        min_endpoints=2,
+        endpoints=[
+            ExpectedEndpoint(
+                method="GET",
+                path="/liveness_check",
+                has_auth=False,
+                has_request_body=False,
+            ),
+            ExpectedEndpoint(
+                method="GET",
+                path="/readiness_check",
+                has_auth=False,
+                has_request_body=False,
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=2,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/liveness_check"),
+                ExpectedPhase1Endpoint(method="GET", path="/readiness_check"),
+            ],
+            has_auth_patterns=False,
         ),
     ),
     # -----------------------------------------------------------------------
