@@ -12,7 +12,7 @@ class LLMConfig(BaseSettings):
     llm_base_url: str = "http://server-pedro.local:8080/v1"
     llm_model: str = "qwen35-35b-a3b-instruct"
     llm_api_key: str = "not-needed"
-    llm_temperature: float = 0.2
+    llm_temperature: float = 0.0
     llm_max_tokens: int = 16384
     instructor_max_retries: int = 3
 
