@@ -17,6 +17,7 @@ from swagger_agent.models import (
     EndpointDescriptor,
 )
 from swagger_agent.agents.scout.harness import run_scout
+from swagger_agent.infra.prescan import run_prescan
 from swagger_agent.agents.route_extractor.harness import (
     RouteExtractorContext,
     run_route_extractor,
@@ -66,6 +67,25 @@ def run_pipeline(
     target_path = Path(target_dir).resolve()
     db = dashboard  # shorthand
 
+    # ── Phase 0: Pre-scan (deterministic) ──
+    if db:
+        db.phase_start(0, "Pre-scan")
+    else:
+        console.print(Rule(" Phase 0: Pre-scan ", style="bold blue"))
+    t0 = time.monotonic()
+
+    prescan_result = run_prescan(str(target_path))
+    result.timings["prescan"] = (time.monotonic() - t0) * 1000
+
+    prescan_summary = (
+        f"{prescan_result.framework or '?'}/{prescan_result.language or '?'}, "
+        f"{len(prescan_result.route_files)} tentative route(s)"
+    )
+    if db:
+        db.phase_complete(0, prescan_summary)
+    else:
+        console.print(f"[bold]Pre-scan:[/bold] {prescan_summary}")
+
     # ── Phase 1: Scout ──
     if db:
         db.phase_start(1, "Scout")
@@ -76,6 +96,7 @@ def run_pipeline(
     manifest, scout_record = run_scout(
         str(target_path), config=config,
         event_handler=db if db else None,
+        prescan=prescan_result,
     )
     result.manifest = manifest
     result.timings["scout"] = (time.monotonic() - t0) * 1000

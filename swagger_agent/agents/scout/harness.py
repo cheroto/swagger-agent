@@ -30,6 +30,7 @@ from swagger_agent.models import (
 )
 from swagger_agent.agents.scout.prompt import SCOUT_SYSTEM_PROMPT
 from swagger_agent.agents.scout.tools import build_scout_tools
+from swagger_agent.infra.prescan import PrescanResult, prescan_to_scratchpad
 
 logger = logging.getLogger("swagger_agent.scout")
 
@@ -388,8 +389,17 @@ def run_scout(
     target_dir: str,
     config: LLMConfig | None = None,
     event_handler: ScoutEventHandler | None = None,
+    prescan: PrescanResult | None = None,
 ) -> tuple[DiscoveryManifest, ScoutRunRecord]:
     """Run the Scout agent against a target directory.
+
+    Args:
+        target_dir: Path to the target project directory.
+        config: LLM configuration. Uses defaults if None.
+        event_handler: Event handler for lifecycle callbacks.
+        prescan: Optional pre-scan results to seed the Scout's initial state.
+            When provided, the Scout starts with tentative findings already
+            populated and focuses on confirmation rather than exploration.
 
     Returns (manifest, run_record). The run_record contains the full
     history of turns, states, and tool results for post-run inspection.
@@ -405,7 +415,21 @@ def run_scout(
 
     tools = build_scout_tools(target_dir)
 
-    state = ScoutWorkingState()
+    if prescan is not None:
+        state = ScoutWorkingState(
+            framework=prescan.framework,
+            language=prescan.language,
+            route_files=list(prescan.route_files),
+            servers=list(prescan.servers),
+            base_path=prescan.base_path,
+            scratchpad=prescan_to_scratchpad(prescan),
+        )
+        logger.info(
+            "Scout seeded with prescan: framework=%s, %d route(s)",
+            prescan.framework, len(prescan.route_files),
+        )
+    else:
+        state = ScoutWorkingState()
     trace = DeterministicTrace()
     last_action_results: list[dict] | None = None
 

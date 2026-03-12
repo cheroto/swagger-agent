@@ -132,6 +132,7 @@ _preprocess()
 # ── Phase definitions ────────────────────────────────────────────────────────
 
 PHASES = [
+    (0, "Pre-scan"),
     (1, "Scout"),
     (2, "Route Extraction"),
     (3, "Schema Resolution"),
@@ -139,7 +140,7 @@ PHASES = [
     (5, "Validation"),
 ]
 
-_LEVEL_FOR_PHASE = {1: 1, 2: 2, 3: 3, 4: 3, 5: 3}  # scout=1, routes=2, schemas+=3
+_LEVEL_FOR_PHASE = {0: 1, 1: 1, 2: 2, 3: 3, 4: 3, 5: 3}  # prescan+scout=1, routes=2, schemas+=3
 _LEVEL_NAMES = {1: "Scout", 2: "Extractor", 3: "Architect"}
 
 
@@ -164,7 +165,7 @@ class PipelineDashboard(ScoutEventHandler):
         self._frame_idx = 0
 
         # Phase tracking
-        self._current_phase = 0
+        self._current_phase: int | None = None
         self._phase_status: dict[int, str] = {}  # "pending"|"active"|"complete"
         self._phase_summary: dict[int, str] = {}
 
@@ -514,7 +515,7 @@ class PipelineDashboard(ScoutEventHandler):
 
     def _build_header(self) -> Panel:
         elapsed = self._elapsed()
-        if self._current_phase:
+        if self._current_phase is not None:
             phase_name = dict(PHASES).get(self._current_phase, "?")
         else:
             phase_name = "Initializing"
@@ -527,7 +528,7 @@ class PipelineDashboard(ScoutEventHandler):
 
         text = Text.from_markup(
             f"  [bold magenta]SWAGGER AGENT[/bold magenta]  │  "
-            f"Phase [bold]{self._current_phase or '-'}[/bold]/5 {phase_name}  │  "
+            f"Phase [bold]{self._current_phase if self._current_phase is not None else '-'}[/bold]/{total} {phase_name}  │  "
             f"{bar} {completed}/{total}  │  "
             f"[bold]{elapsed:.1f}s[/bold]"
         )

@@ -17,6 +17,7 @@ from rich.console import Console
 
 from swagger_agent.config import LLMConfig
 from swagger_agent.agents.scout.harness import run_scout
+from swagger_agent.infra.prescan import run_prescan
 from swagger_agent.agents.scout.rich_handler import (
     RichScoutHandler,
     print_run_summary,
@@ -41,6 +42,7 @@ def main() -> None:
     parser.add_argument("--show-all", action="store_true", help="Show everything (turns, trace, state)")
     parser.add_argument("--turn", type=int, metavar="N", help="Print detailed info for turn N")
     parser.add_argument("--no-live", action="store_true", help="Disable live dashboard (use scrolling output)")
+    parser.add_argument("--no-prescan", action="store_true", help="Skip deterministic pre-scan (start from scratch)")
     args = parser.parse_args()
 
     target_dir = os.path.abspath(args.target_dir)
@@ -56,11 +58,21 @@ def main() -> None:
     console.print(f"[dim]Target: {target_dir}[/dim]")
     console.print()
 
+    # Run prescan unless disabled
+    prescan_result = None
+    if not args.no_prescan:
+        prescan_result = run_prescan(target_dir)
+        console.print(
+            f"[bold]Pre-scan:[/bold] {prescan_result.framework or '?'}/{prescan_result.language or '?'}, "
+            f"{len(prescan_result.route_files)} tentative route(s)"
+        )
+        console.print()
+
     if not args.no_live:
         handler.start()
 
     try:
-        manifest, record = run_scout(target_dir, config=config, event_handler=handler)
+        manifest, record = run_scout(target_dir, config=config, event_handler=handler, prescan=prescan_result)
     finally:
         if not args.no_live:
             handler.stop()
