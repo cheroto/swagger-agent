@@ -47,10 +47,14 @@ def _fmt_chars(n: int) -> str:
     return str(n)
 
 
-def _print_telemetry(telemetry: Telemetry, console: Console) -> None:
-    """Print LLM call telemetry as a summary table."""
-    calls = telemetry.calls
+def _print_telemetry_table(calls: list[dict], console: Console) -> None:
+    """Print LLM call telemetry as a summary table.
+
+    Accepts a list of call dicts (either from Telemetry.calls converted via
+    to_dict(), or loaded directly from result.json telemetry.calls).
+    """
     if not calls:
+        console.print("[dim]No LLM calls recorded.[/dim]")
         return
 
     table = Table(title="LLM Calls", expand=True)
@@ -63,22 +67,21 @@ def _print_telemetry(telemetry: Telemetry, console: Console) -> None:
     table.add_column("Time", width=8, justify="right")
 
     for i, c in enumerate(calls, 1):
-        # Shorten target_file to basename
-        target = os.path.basename(c.target_file) if c.target_file else ""
+        target = os.path.basename(c.get("target_file", "")) if c.get("target_file") else ""
         table.add_row(
             str(i),
-            c.agent,
-            c.phase,
+            c.get("agent", ""),
+            c.get("phase", ""),
             target,
-            _fmt_chars(c.input_chars),
-            _fmt_chars(c.output_chars),
-            f"{c.duration_ms / 1000:.1f}s",
+            _fmt_chars(c.get("input_chars", 0)),
+            _fmt_chars(c.get("output_chars", 0)),
+            f"{c.get('duration_ms', 0) / 1000:.1f}s",
         )
 
     # Totals row
-    total_input = sum(c.input_chars for c in calls)
-    total_output = sum(c.output_chars for c in calls)
-    total_time = sum(c.duration_ms for c in calls)
+    total_input = sum(c.get("input_chars", 0) for c in calls)
+    total_output = sum(c.get("output_chars", 0) for c in calls)
+    total_time = sum(c.get("duration_ms", 0) for c in calls)
     table.add_row(
         "", "[bold]TOTAL[/bold]", f"[bold]{len(calls)} calls[/bold]", "",
         f"[bold]{_fmt_chars(total_input)}[/bold]",
@@ -142,7 +145,7 @@ def main() -> None:
         prog="swagger-agent",
         description="Generate an OpenAPI 3.0 spec from a codebase using multi-agent extraction",
     )
-    parser.add_argument("target_dir", help="Path to the target project directory")
+    parser.add_argument("target_dir", nargs="?", help="Path to the target project directory")
     parser.add_argument("-o", "--output", metavar="PATH", help="Write YAML to file instead of stdout")
     parser.add_argument("--dump-json", metavar="PATH", help="Save full pipeline result as JSON")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
@@ -151,9 +154,35 @@ def main() -> None:
         "--skip-scout", action="store_true",
         help="[experimental] Skip Scout LLM and use deterministic prescan as the discovery manifest",
     )
+    parser.add_argument(
+        "--telemetry", action="store_true",
+        help="Print per-LLM-call telemetry table after the run",
+    )
+    parser.add_argument(
+        "--telemetry-from", metavar="PATH",
+        help="Print telemetry from a prior result.json and exit (no run)",
+    )
     args = parser.parse_args()
 
+    # -- Replay mode: just print telemetry from a prior result.json --
+    if args.telemetry_from:
+        console = Console(stderr=True)
+        path = args.telemetry_from
+        if not os.path.isfile(path):
+            print(f"Error: file not found: {path}", file=sys.stderr)
+            sys.exit(1)
+        with open(path) as f:
+            data = json.load(f)
+        telemetry_data = data.get("telemetry")
+        if not telemetry_data or not telemetry_data.get("calls"):
+            console.print("[yellow]No telemetry data in this result.json[/yellow]")
+            sys.exit(0)
+        _print_telemetry_table(telemetry_data["calls"], console)
+        sys.exit(0)
+
     # Validate target
+    if not args.target_dir:
+        parser.error("target_dir is required (unless using --telemetry-from)")
     if not os.path.isdir(args.target_dir):
         print(f"Error: directory not found: {args.target_dir}", file=sys.stderr)
         sys.exit(1)
@@ -196,8 +225,11 @@ def main() -> None:
         _print_completeness(result.completeness, console)
         console.print()
 
-    # Print LLM telemetry summary
-    _print_telemetry(result.telemetry, console)
+    # Print LLM telemetry summary (only with --telemetry flag)
+    if args.telemetry:
+        _print_telemetry_table(
+            [c.to_dict() for c in result.telemetry.calls], console,
+        )
 
     # Print timings
     if args.verbose:
