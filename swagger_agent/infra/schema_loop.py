@@ -132,7 +132,13 @@ def run_schema_loop(
     # 1. Seed the queue from ref_hints (sanitize stale $ref prefixes)
     for hint in ref_hints:
         name = _sanitize_ref_hint(hint["ref_hint"])
-        import_source = hint.get("import_source")
+        # Pick the best disambiguation hint: import_line > file_namespace > legacy import_source
+        import_source = (
+            hint.get("import_line")
+            or hint.get("file_namespace")
+            or hint.get("import_source")  # backward compat with old dict format
+            or None
+        )
         if name not in all_schemas:
             queue.append((name, import_source))
 

@@ -44,7 +44,7 @@ def _make_descriptor(endpoints: list[Endpoint], source_file: str = "routes.py") 
 
 def _unresolvable_ref(name: str = "object") -> RefHint:
     """Helper to create an unresolvable RefHint."""
-    return RefHint(ref_hint=name, import_source="", resolution="unresolvable")
+    return RefHint(ref_hint=name, import_line="", file_namespace="", resolution="unresolvable")
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ class TestEmptyRequiredArrayStripped:
                 responses=[Response(
                     status_code="200",
                     description="OK",
-                    schema_ref=RefHint(ref_hint="Item", import_source="", resolution="unresolvable"),
+                    schema_ref=RefHint(ref_hint="Item", import_line="", file_namespace="", resolution="unresolvable"),
                 )],
             ),
         ])

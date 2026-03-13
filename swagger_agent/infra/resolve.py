@@ -2,13 +2,13 @@
 
 Resolution order:
   1. ctags index (primary) — universal-ctags indexes class/struct/interface/record
-     definitions across all languages. import_source is used only for
-     disambiguation when multiple matches exist for the same type name.
+     definitions across all languages. import_line / file_namespace are used
+     only for disambiguation when multiple matches exist for the same type name.
   2. grep fallback — pattern match for edge cases ctags misses (TypedDict,
      Mongoose schemas, type aliases defined via assignment, etc.).
 
-import_source is NEVER used as a standalone file resolver. It is only a
-disambiguation signal passed into tiers 1 and 2.
+import_line / file_namespace are NEVER used as standalone file resolvers.
+They are disambiguation signals passed into tiers 1 and 2.
 """
 
 from __future__ import annotations
@@ -211,6 +211,11 @@ def _extract_path_fragment(import_source: str) -> str | None:
     m = re.match(r"import\s+(static\s+)?([\w.]+)\s*;?", import_source)
     if m:
         return m.group(2).replace(".", "/")
+
+    # Bare dotted string fallback (e.g. "Conduit.Features.Articles")
+    # Handles cases where the LLM provides a namespace without the keyword prefix.
+    if re.match(r"^[\w]+(?:\.[\w]+)+$", import_source):
+        return import_source.replace(".", "/")
 
     return None
 

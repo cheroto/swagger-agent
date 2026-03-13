@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 
 class RefHint(BaseModel):
     ref_hint: str = Field(description="Type name as it appears in code. Use the inner type only, strip collection wrappers: List<Article> → 'Article'.")
-    import_source: str = Field(description="For 'import': the exact import line. For 'class_to_file': the file's namespace/package declaration (e.g. 'namespace Conduit.Features.Articles;'). For 'unresolvable': 'built-in' or 'framework type'.")
+    import_line: str = Field(default="", description="The exact import/require/using statement that imports this type. Empty string if not imported (same-namespace or unresolvable).")
+    file_namespace: str = Field(default="", description="The namespace/package/module declaration of the current file (e.g. 'namespace Conduit.Features.Articles;', 'package com.example.users;'). Helps disambiguate same-name types across packages.")
     resolution: Literal["import", "class_to_file", "unresolvable"] = Field(description="'import' = found the import line. 'class_to_file' = same namespace/package, no explicit import. 'unresolvable' = ONLY for built-in/framework types (never for domain types like UserResponse).")
 
 

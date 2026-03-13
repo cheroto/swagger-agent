@@ -97,20 +97,21 @@ _PHASE2_OUTPUT_FORMAT = """\
 
 For every type reference (request bodies, response schemas, parameter types):
 
-1. **Type appears in the import/require/using statements** — use the exact line:
-   - `resolution: "import"`, `import_source`: the exact import/require/using statement
+1. **Type appears in the import/require/using statements:**
+   - `resolution: "import"`, `import_line`: the exact import statement
    - This applies to ALL languages: Python `from`/`import`, JS `require`/`import`, Java `import`, C# `using`, Go `import`, Rust `use`, PHP `use`, Ruby `require`, etc.
 
-2. **Type is used in the code but has NO import line** — it lives in the same package/namespace/module:
-   - `resolution: "class_to_file"`, `import_source`: null
+2. **Type is used in the code but has NO import line** — same package/namespace/module:
+   - `resolution: "class_to_file"`, `import_line`: empty
    - This is COMMON: types in the same namespace (C#), same package (Java/Go), same directory (JS/TS), or same module (Python) often need no explicit import.
-   - If a type name appears as a return type, parameter type, or is instantiated in the code, and there is no import for it, it is `class_to_file` — NOT `unresolvable`.
+   - If a type name appears as a return type, parameter type, or is instantiated, and there is no import for it, it is `class_to_file` — NOT `unresolvable`.
 
-3. **Framework/language built-in types ONLY**:
+3. **Framework/language built-in types ONLY:**
    - `resolution: "unresolvable"`
-   - This is STRICTLY for: built-in types (dict, object, string, int, Any), framework base types (Response, IActionResult, HttpResponse, ActionResult, StreamingResponse, Task), and generic containers when the inner type has no name (e.g. a raw dict/map literal).
-   - If a type has a domain-specific name (e.g. ArticleEnvelope, UserResponse, CreateCommand, PostRequest), it is NEVER unresolvable — use `class_to_file` if no import exists.
-   - Also use for dynamically constructed responses with no named type.
+   - STRICTLY for: built-in types (dict, object, string, int, Any), framework base types (Response, IActionResult, HttpResponse, ActionResult, Task), and generic containers with no named inner type.
+   - Domain-specific names (ArticleEnvelope, UserResponse, PostRequest) are NEVER unresolvable — use `class_to_file`.
+
+**IMPORTANT:** Always set `file_namespace` to the namespace/package declaration at the top of the current file. This is critical for disambiguation.
 
 When emitting ref_hint names, use the **inner type only** — strip collection wrappers. For example: `List<Article>` → ref_hint: "Article", `Vec<User>` → ref_hint: "User", `Article[]` → ref_hint: "Article".
 
@@ -215,7 +216,7 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str) -> str:
         sections.append("```")
         sections.extend(analysis.import_lines)
         sections.append("```")
-        sections.append("Use these exact import lines as import_source in RefHints when a type matches.")
+        sections.append("Use these exact import lines as import_line in RefHints when a type matches.")
 
     # --- Endpoint checklist ---
     if analysis.endpoints:

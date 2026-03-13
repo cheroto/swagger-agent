@@ -117,11 +117,11 @@ class TestCtagsPrefilterExpressionBodied:
 class TestRefHintImportSource:
     """Route extractor must produce usable import_source on RefHints."""
 
-    def test_class_to_file_refs_have_usable_import_source(
+    def test_class_to_file_refs_have_file_namespace(
         self, repos_root: str, llm_config: LLMConfig
     ):
         """ArticlesController references Create.Command and Edit.Model.
-        import_source must be a namespace/using declaration, not garbage."""
+        file_namespace must contain the namespace of the current file."""
         descriptor, _ = _run_route_extractor_for(
             repos_root,
             "aspnetcore-realworld",
@@ -141,25 +141,25 @@ class TestRefHintImportSource:
 
             for location, ref in refs:
                 if ref.resolution == "class_to_file":
-                    # import_source must NOT be the resolution value echoed back
-                    assert ref.import_source != "class_to_file", (
+                    # file_namespace must be set and useful
+                    assert ref.file_namespace and len(ref.file_namespace) > 5, (
                         f"[{ep.method} {ep.path} {location}] "
-                        f"import_source is '{ref.import_source}' — "
-                        f"LLM echoed the resolution value instead of providing "
-                        f"the namespace/package declaration."
+                        f"file_namespace is '{ref.file_namespace}' — "
+                        f"must contain the namespace/package of the current file "
+                        f"for disambiguation."
                     )
-                    # import_source must contain something useful (namespace, dotted path)
-                    assert len(ref.import_source) > 5, (
+                    # file_namespace must NOT be the resolution value echoed back
+                    assert ref.file_namespace not in ("class_to_file", "import", "unresolvable"), (
                         f"[{ep.method} {ep.path} {location}] "
-                        f"import_source is '{ref.import_source}' — too short to be "
-                        f"a useful namespace/package/import declaration."
+                        f"file_namespace is '{ref.file_namespace}' — "
+                        f"LLM echoed a resolution value instead of the actual namespace."
                     )
 
     def test_import_refs_have_actual_import_lines(
         self, repos_root: str, llm_config: LLMConfig
     ):
         """FavoritesController imports from Articles namespace.
-        import_source must be the actual using statement."""
+        import_line must be the actual using statement."""
         descriptor, _ = _run_route_extractor_for(
             repos_root,
             "aspnetcore-realworld",
@@ -172,12 +172,15 @@ class TestRefHintImportSource:
         for ep in descriptor.endpoints:
             for resp in ep.responses:
                 if resp.schema_ref and resp.schema_ref.resolution == "import":
-                    assert "using" in resp.schema_ref.import_source or \
-                           "import" in resp.schema_ref.import_source or \
-                           "from" in resp.schema_ref.import_source, (
-                        f"[{ep.method} {ep.path}] import_source for import resolution "
-                        f"should contain an import keyword, got: "
-                        f"'{resp.schema_ref.import_source}'"
+                    assert resp.schema_ref.import_line, (
+                        f"[{ep.method} {ep.path}] import_line must be set for "
+                        f"resolution='import'"
+                    )
+                    assert "using" in resp.schema_ref.import_line or \
+                           "import" in resp.schema_ref.import_line or \
+                           "from" in resp.schema_ref.import_line, (
+                        f"[{ep.method} {ep.path}] import_line should contain an "
+                        f"import keyword, got: '{resp.schema_ref.import_line}'"
                     )
 
 
