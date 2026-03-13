@@ -284,37 +284,9 @@ You receive:
 2. The API base path (e.g. "/api")
 3. The full content of one route file
 
-## Output Format
+## Output
 
-Return an EndpointDescriptor with a list of Endpoint objects. Each endpoint has:
-
-The output schema is provided via the tool/function definition. Key semantic notes:
-
-- **security**: [] = public (no auth). ["BearerAuth"] = protected. ALWAYS set explicitly, never omit.
-- **request_body**: Only include when the endpoint consumes a body. schema_ref is REQUIRED on RequestBody.
-- **import_source**: REQUIRED on every RefHint. For imports: the exact import line. For same-namespace types: the namespace/package declaration of the current file. For unresolvable: a descriptive string like "built-in" or "framework type".
-- **resolution**: "import" when you found the import line. "class_to_file" for same-namespace/package types. "unresolvable" ONLY for built-in/framework types (never for domain types like UserResponse, ArticleEnvelope).
-- **ref_hint**: Use the inner type name, strip collection wrappers. `List<Article>` → "Article".
-
-## RefHint Rules
-
-For every type reference you encounter (request bodies, response schemas, parameter types):
-
-1. **Look at the imports at the top of the file.** If the type is imported (via import, require, using, use, etc.), capture the full import line.
-   - `resolution: "import"` — when you found the import line
-   - `import_source`: the exact import statement (e.g. `"from app.schemas.user import UserResponse"`, `"const { UserResponse } = require('./schemas/user')"`, `"using Conduit.Features.Articles;"`)
-
-2. **No import found but type is used** (same-package/namespace/module, implicit):
-   - `resolution: "class_to_file"`
-   - `import_source`: REQUIRED — set to the current file's namespace/package/module declaration (e.g. `"namespace Conduit.Features.Articles;"`, `"package com.example.users;"`, `"module UserService"`). This helps disambiguate when multiple files define types with the same name. If no namespace/package declaration exists, use the relative file path of the current route file.
-   - This is COMMON: types in the same namespace (C#), same package (Java/Go), same directory (JS/TS), or same module often need no explicit import. If a type has a domain-specific name and appears in the code with no import, it is `class_to_file`.
-
-3. **Framework/language built-in types ONLY:**
-   - `resolution: "unresolvable"`
-   - STRICTLY for: built-in types (dict, object, string, int, Any), framework base types (Response, IActionResult, HttpResponse, StreamingResponse, Task), generic containers with no named inner type.
-   - If a type has a domain-specific name (ArticleEnvelope, UserResponse, PostRequest), it is NEVER unresolvable.
-
-When emitting ref_hint names, use the **inner type only** — strip collection wrappers. `List<Article>` → ref_hint: "Article".
+Return an EndpointDescriptor. The schema is provided via the tool definition — field descriptions contain all semantic guidance.
 
 ## Authentication Detection
 

@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field
 
 
 class RefHint(BaseModel):
-    ref_hint: str
-    import_source: str
-    resolution: Literal["import", "class_to_file", "unresolvable"]
+    ref_hint: str = Field(description="Type name as it appears in code. Use the inner type only, strip collection wrappers: List<Article> → 'Article'.")
+    import_source: str = Field(description="For 'import': the exact import line. For 'class_to_file': the file's namespace/package declaration (e.g. 'namespace Conduit.Features.Articles;'). For 'unresolvable': 'built-in' or 'framework type'.")
+    resolution: Literal["import", "class_to_file", "unresolvable"] = Field(description="'import' = found the import line. 'class_to_file' = same namespace/package, no explicit import. 'unresolvable' = ONLY for built-in/framework types (never for domain types like UserResponse).")
 
 
 # --- Discovery Manifest ---
@@ -47,65 +47,65 @@ class DiscoveryManifest(BaseModel):
 
 class EndpointSketch(BaseModel):
     """Lightweight endpoint identification from Phase 1."""
-    method: str                    # GET, POST, etc.
-    path: str                      # Full path as observed in code
-    handler_name: str              # Function/method name
+    method: str = Field(description="HTTP method: GET, POST, PUT, PATCH, DELETE.")
+    path: str = Field(description="Full path as observed in code, including any router prefix.")
+    handler_name: str = Field(description="The function or method name that handles this endpoint.")
 
 
 class AuthPattern(BaseModel):
     """Observed auth mechanism from Phase 1."""
-    mechanism: str                 # e.g. "middleware in handler chain", "decorator", "annotation"
-    indicator: str                 # e.g. "auth.required", "@PreAuthorize", "[Authorize]"
-    scheme_type: str               # "bearer", "apikey", "cookie", "basic", "oauth2", "unknown"
-    applies_to: str                # "all", "per-endpoint", "group"
+    mechanism: str = Field(description="How auth is applied: 'middleware in handler chain', 'decorator', 'annotation', 'dependency injection'.")
+    indicator: str = Field(description="The exact code marker, e.g. 'auth.required', '@PreAuthorize', '[Authorize]', 'Depends(get_current_user)'.")
+    scheme_type: str = Field(description="Auth type: 'bearer', 'apikey', 'cookie', 'basic', 'oauth2', 'unknown'.")
+    applies_to: str = Field(description="Scope: 'all' (class/router level), 'per-endpoint', 'group' (middleware group).")
 
 
 class CodeAnalysis(BaseModel):
     """Phase 1 output: observations about the route file."""
-    routing_style: str             # How routes are defined
-    path_param_syntax: str         # ":param" or "{param}" or "<param>"
-    base_prefix: str               # Router-level prefix if any
-    auth_patterns: list[AuthPattern]
-    has_auth_imports: bool         # Whether auth-related imports exist
-    auth_inference_notes: str = "" # When no explicit auth patterns: note any hints (middleware groups, comments, naming conventions) suggesting auth is applied externally
-    request_body_style: str        # How bodies are consumed
-    error_handling_notes: str      # How errors are returned
-    import_lines: list[str]        # All import/require lines (raw)
-    endpoints: list[EndpointSketch]
+    routing_style: str = Field(description="How routes are defined, e.g. 'decorator-based', 'method chaining', 'attribute routing'.")
+    path_param_syntax: str = Field(description="Path parameter syntax used: ':param', '{param}', or '<param>'.")
+    base_prefix: str = Field(description="Router/controller-level path prefix if any, e.g. '/api/posts', '/articles'. Empty string if none.")
+    auth_patterns: list[AuthPattern] = Field(description="All auth mechanisms observed. Empty list if no auth patterns found.")
+    has_auth_imports: bool = Field(description="Whether auth-related imports exist in the file.")
+    auth_inference_notes: str = Field(default="", description="When no explicit auth patterns found: note indirect signals like middleware groups, comments, or naming conventions suggesting auth is applied externally.")
+    request_body_style: str = Field(description="How request bodies are consumed, e.g. 'req.body', '@RequestBody', 'FromBody', 'Depends'.")
+    error_handling_notes: str = Field(description="How errors are returned: try/catch patterns, error middleware, custom error classes.")
+    import_lines: list[str] = Field(description="All import/require/using lines from the file, copied verbatim.")
+    endpoints: list[EndpointSketch] = Field(description="Every endpoint found in the file.")
 
 
 # --- Endpoint Descriptor ---
 
 
 class Parameter(BaseModel):
-    name: str
-    in_: Literal["path", "query", "header", "cookie"] = Field(alias="in")
+    name: str = Field(description="Parameter name as it appears in the code.")
+    in_: Literal["path", "query", "header", "cookie"] = Field(alias="in", description="Parameter location. Path params are always required.")
     required: bool = False
-    schema_: dict = Field(default_factory=dict, alias="schema")
+    schema_: dict = Field(default_factory=dict, alias="schema", description="JSON Schema for the parameter type, e.g. {'type': 'string'}, {'type': 'integer'}.")
 
     model_config = {"populate_by_name": True}
 
 
 class RequestBody(BaseModel):
-    content_type: str = "application/json"
-    schema_ref: RefHint
+    content_type: str = Field(default="application/json", description="'application/json' for structured data, 'multipart/form-data' for file uploads, 'application/x-www-form-urlencoded' for form data.")
+    schema_ref: RefHint = Field(description="Type reference for the request body. Always provide — use resolution 'unresolvable' with a descriptive name if the type cannot be determined.")
 
 
 class Response(BaseModel):
-    status_code: str
+    status_code: str = Field(description="HTTP status code: '200', '201', '401', '403', '404', '422', etc.")
     description: str = ""
     schema_ref: RefHint | None = None
 
 
 class Endpoint(BaseModel):
-    method: str
-    path: str
-    operation_id: str
-    tags: list[str] = []
-    security: list[str] = Field(default_factory=list)
-    parameters: list[Parameter] = []
-    request_body: RequestBody | None = None
-    responses: list[Response] = []
+    method: str = Field(description="HTTP method: GET, POST, PUT, PATCH, DELETE (uppercase).")
+    path: str = Field(description="Full path including base_path, using the framework's param syntax (e.g. /api/users/:id or /api/users/{id}).")
+    operation_id: str = Field(description="Derived from the handler function name (e.g. 'getUser', 'create_article').")
+    tags: list[str] = Field(default_factory=list, description="Grouping tags derived from controller/router name, e.g. ['Articles'].")
+    security: list[str] = Field(default_factory=list, description="Security scheme names. [] = explicitly public (no auth). ['BearerAuth'] = requires auth. Always set, never omit.")
+    parameters: list[Parameter] = Field(default_factory=list)
+    request_body: RequestBody | None = Field(default=None, description="Include only when the endpoint consumes a request body.")
+    responses: list[Response] = Field(default_factory=list, description="All response codes including errors. Auth endpoints must have 401. Endpoints with path params should have 404.")
 
 
 class EndpointDescriptor(BaseModel):
