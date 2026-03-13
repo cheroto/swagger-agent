@@ -249,6 +249,16 @@ def run_schema_loop(
                     round_new_schemas.update(descriptor.schemas)
                     extracted_files.add(str(file_path))
 
+                    # Alias: if the requested name is dotted (e.g. "Create.Command")
+                    # and the extractor returned the leaf name (e.g. "Command"),
+                    # store the schema under the dotted name too so $ref resolution
+                    # finds it. This is structural — dotted names universally mean
+                    # nested/scoped types.
+                    if "." in schema_name:
+                        leaf = schema_name.rsplit(".", 1)[1]
+                        if leaf in descriptor.schemas and schema_name not in round_new_schemas:
+                            round_new_schemas[schema_name] = descriptor.schemas[leaf]
+
         # Merge new schemas
         all_schemas.update(round_new_schemas)
 
