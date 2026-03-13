@@ -33,6 +33,31 @@ def _derive_security_scheme(name: str) -> dict:
     return {"type": "http", "scheme": "bearer"}
 
 
+def _replace_outside_braces(path: str, pattern: str, repl: str) -> str:
+    """Apply a regex substitution only to text outside of {...} segments."""
+    result: list[str] = []
+    i = 0
+    while i < len(path):
+        if path[i] == "{":
+            close = path.find("}", i)
+            if close == -1:
+                # No closing brace — treat rest as outside
+                result.append(re.sub(pattern, repl, path[i:]))
+                break
+            # Keep the braced segment verbatim
+            result.append(path[i:close + 1])
+            i = close + 1
+        else:
+            # Find the next opening brace or end of string
+            next_open = path.find("{", i)
+            if next_open == -1:
+                result.append(re.sub(pattern, repl, path[i:]))
+                break
+            result.append(re.sub(pattern, repl, path[i:next_open]))
+            i = next_open
+    return "".join(result)
+
+
 def _normalize_path(base_path: str, endpoint_path: str) -> str:
     """Combine base_path and endpoint path, normalizing to OpenAPI format.
 
@@ -54,14 +79,11 @@ def _normalize_path(base_path: str, endpoint_path: str) -> str:
     if not full.startswith("/"):
         full = "/" + full
 
-    # Strip route constraints from inside braces BEFORE :param conversion.
-    # ASP.NET/Spring use {param:constraint} (e.g. {version:apiVersion}, {id:int}).
-    # OpenAPI only wants {param} — the constraint is dropped.
-    full = re.sub(r"\{(\w+):[^}]+\}", r"{\1}", full)
-
-    # Convert framework-specific path param syntax to OpenAPI {param} style
-    # :param (Express, Sinatra, Flask) and <param> (Flask, Django)
-    full = re.sub(r":(\w+)", r"{\1}", full)
+    # Convert framework-specific path param syntax to OpenAPI {param} style.
+    # ONLY match :param and <param> OUTSIDE of braces — colons inside {param:constraint}
+    # are route constraints (ASP.NET, Spring), not path parameter markers.
+    # The LLM is responsible for resolving constraints to clean {param} paths.
+    full = _replace_outside_braces(full, r":(\w+)", r"{\1}")
     full = re.sub(r"<(\w+)>", r"{\1}", full)
 
     # Validate and fix the path template
@@ -132,6 +154,17 @@ def _sanitize_path_template(path: str) -> str:
                 i += 1
         path = "".join(fixed_parts)
         path = re.sub(r"//+", "/", path)
+
+    # Fix unresolved route constraints: {param:constraint} → {param}
+    # This is a fallback — the LLM should resolve these, but if it doesn't,
+    # infrastructure strips the constraint to produce valid OpenAPI.
+    constraint_pattern = re.compile(r"\{(\w+):[^}]+\}")
+    if constraint_pattern.search(path):
+        logger.warning(
+            "Path has unresolved route constraints (LLM should have resolved these): %s",
+            path,
+        )
+        path = constraint_pattern.sub(r"{\1}", path)
 
     # Validate each {param} segment
     for match in re.finditer(r"\{([^}]*)\}", path):
