@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 import yaml
 
 from swagger_agent.models import DiscoveryManifest, EndpointDescriptor, Endpoint
+
+logger = logging.getLogger("swagger_agent.assembler")
 
 
 @dataclass
@@ -31,17 +34,117 @@ def _derive_security_scheme(name: str) -> dict:
 
 
 def _normalize_path(base_path: str, endpoint_path: str) -> str:
-    """Combine base_path and endpoint path, normalizing to OpenAPI format."""
-    full = f"{base_path.rstrip('/')}/{endpoint_path.lstrip('/')}"
+    """Combine base_path and endpoint path, normalizing to OpenAPI format.
+
+    Handles:
+    - Deduplication when endpoint_path already contains the base_path prefix
+    - Conversion of :param and <param> to {param}
+    - Validation of the resulting path template (nested braces, empty braces)
+    """
+    # Deduplicate: if endpoint path already starts with base_path, don't prepend
+    stripped_base = base_path.rstrip("/")
+    stripped_ep = endpoint_path.lstrip("/")
+    if stripped_base and stripped_ep.startswith(stripped_base.lstrip("/")):
+        full = f"/{stripped_ep}"
+    else:
+        full = f"{stripped_base}/{stripped_ep}"
+
     # Collapse double slashes (but keep the leading one)
     full = re.sub(r"//+", "/", full)
     if not full.startswith("/"):
         full = "/" + full
+
     # Convert framework-specific path param syntax to OpenAPI {param} style
     # :param (Express, Sinatra, Flask) and <param> (Flask, Django)
     full = re.sub(r":(\w+)", r"{\1}", full)
     full = re.sub(r"<(\w+)>", r"{\1}", full)
+
+    # Validate and fix the path template
+    full = _sanitize_path_template(full)
     return full
+
+
+# Matches a well-formed path parameter: {word_chars}
+_VALID_PARAM = re.compile(r"^\w+$")
+
+
+def _sanitize_path_template(path: str) -> str:
+    """Validate and fix path template brace syntax.
+
+    Fixes:
+    - Nested braces: {version{apiVersion}} → {apiVersion}
+    - Empty braces: /path/{}/rest → /path/rest
+    - Unclosed braces: /path/{param/rest → /path/{param}/rest
+    - Unopened braces: /path/param}/rest → /path/param/rest
+    """
+    original = path
+
+    # Fix nested braces: extract the innermost parameter name
+    # e.g. {version{apiVersion}} → {apiVersion}
+    while re.search(r"\{[^}]*\{", path):
+        path = re.sub(r"\{[^{}]*\{(\w+)\}[^{}]*\}", r"{\1}", path)
+        # Safety: break if no progress (prevents infinite loop on weird input)
+        if path == original:
+            break
+        original = path
+
+    # Remove empty braces
+    if "{}" in path:
+        logger.warning("Path template has empty braces, removing: %s", original)
+        path = path.replace("{}", "")
+        # Clean up doubled slashes from removal
+        path = re.sub(r"//+", "/", path)
+
+    # Fix unclosed braces: {param without closing }
+    # Find { not followed by } before the next { or end of string
+    unclosed = re.search(r"\{(\w+)(?=[/{]|$)(?!\})", path)
+    if unclosed:
+        logger.warning("Path template has unclosed brace, fixing: %s", original)
+        path = re.sub(r"\{(\w+)(?=[/{]|$)(?!\})", r"{\1}", path)
+
+    # Remove stray closing braces: any } not part of a {param} pair.
+    # After all fixes above, well-formed params are {word_chars}.
+    # Rebuild by removing } that aren't part of {...}.
+    if path.count("{") != path.count("}"):
+        logger.warning("Path template has mismatched braces, fixing: %s", path)
+        # Remove } not preceded by a matching {
+        fixed_parts: list[str] = []
+        i = 0
+        while i < len(path):
+            if path[i] == "{":
+                close = path.find("}", i)
+                if close == -1:
+                    # Unclosed { at end — already handled above, skip the {
+                    fixed_parts.append(path[i + 1:])
+                    break
+                fixed_parts.append(path[i:close + 1])
+                i = close + 1
+            elif path[i] == "}":
+                # Stray } — skip it
+                i += 1
+            else:
+                fixed_parts.append(path[i])
+                i += 1
+        path = "".join(fixed_parts)
+        path = re.sub(r"//+", "/", path)
+
+    # Validate each {param} segment
+    for match in re.finditer(r"\{([^}]*)\}", path):
+        param_name = match.group(1)
+        if not _VALID_PARAM.match(param_name):
+            logger.warning(
+                "Path parameter name is not a valid identifier: {%s} in %s",
+                param_name, path,
+            )
+
+    # Remove trailing slash (except for root "/")
+    if len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/")
+
+    if path != original:
+        logger.info("Path template normalized: %s → %s", original, path)
+
+    return path
 
 
 # Language-agnostic array/collection wrapper detection.
