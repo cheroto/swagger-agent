@@ -91,72 +91,83 @@ def _normalize_path(base_path: str, endpoint_path: str) -> str:
     return full
 
 
-# Matches a well-formed path parameter: {word_chars}
-_VALID_PARAM = re.compile(r"^\w+$")
+def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
+    """Ensure parameter objects match the names in the path template.
+
+    After _normalize_path may have renamed parameters (e.g. stripping
+    constraints: {version:apiVersion} → {version}), this function
+    renames any path parameter objects whose name matches a constraint
+    that was stripped, so path template and parameter objects stay consistent.
+
+    This is agnostic — it compares the set of {names} in the path against
+    the set of path parameter names in the endpoint, and fixes mismatches.
+    """
+    if not ep.parameters:
+        return
+
+    # Extract parameter names from the path template
+    path_params = set(re.findall(r"\{(\w+)\}", path_key))
+    if not path_params:
+        return
+
+    # Collect current path parameter names from the endpoint
+    ep_path_params = {
+        p.name for p in ep.parameters if p.in_ == "path"
+    }
+
+    # Find mismatches: names in endpoint params that aren't in path template
+    extra_in_ep = ep_path_params - path_params
+    missing_in_ep = path_params - ep_path_params
+
+    if not extra_in_ep or not missing_in_ep:
+        return  # No mismatch, or can't fix (different count)
+
+    # Try to match extras to missing by position in the path.
+    # For simple cases (1:1 mismatch), rename directly.
+    # For complex cases, use path segment position to match.
+    if len(extra_in_ep) == 1 and len(missing_in_ep) == 1:
+        old_name = extra_in_ep.pop()
+        new_name = missing_in_ep.pop()
+        for p in ep.parameters:
+            if p.in_ == "path" and p.name == old_name:
+                logger.info(
+                    "Reconciling path parameter: %s → %s (path template: %s)",
+                    old_name, new_name, path_key,
+                )
+                p.name = new_name
+                break
+        return
+
+    # Multiple mismatches: try to match by original path order
+    # Extract {param} positions from the original endpoint path
+    orig_params = re.findall(r"\{(\w+?)(?::\w+)?\}", ep.path)
+    norm_params = re.findall(r"\{(\w+)\}", path_key)
+
+    if len(orig_params) == len(norm_params):
+        rename_map = {}
+        for orig, norm in zip(orig_params, norm_params):
+            if orig != norm and orig in extra_in_ep and norm in missing_in_ep:
+                rename_map[orig] = norm
+
+        for p in ep.parameters:
+            if p.in_ == "path" and p.name in rename_map:
+                logger.info(
+                    "Reconciling path parameter: %s → %s (path template: %s)",
+                    p.name, rename_map[p.name], path_key,
+                )
+                p.name = rename_map[p.name]
 
 
 def _sanitize_path_template(path: str) -> str:
-    """Validate and fix path template brace syntax.
+    """Validate and fix path template issues.
 
-    Fixes:
-    - Nested braces: {version{apiVersion}} → {apiVersion}
-    - Empty braces: /path/{}/rest → /path/rest
-    - Unclosed braces: /path/{param/rest → /path/{param}/rest
-    - Unopened braces: /path/param}/rest → /path/param/rest
+    Strips unresolved route constraints ({param:constraint} → {param})
+    and removes trailing slashes.
     """
     original = path
 
-    # Fix nested braces: extract the innermost parameter name
-    # e.g. {version{apiVersion}} → {apiVersion}
-    while re.search(r"\{[^}]*\{", path):
-        path = re.sub(r"\{[^{}]*\{(\w+)\}[^{}]*\}", r"{\1}", path)
-        # Safety: break if no progress (prevents infinite loop on weird input)
-        if path == original:
-            break
-        original = path
-
-    # Remove empty braces
-    if "{}" in path:
-        logger.warning("Path template has empty braces, removing: %s", original)
-        path = path.replace("{}", "")
-        # Clean up doubled slashes from removal
-        path = re.sub(r"//+", "/", path)
-
-    # Fix unclosed braces: {param without closing }
-    # Find { not followed by } before the next { or end of string
-    unclosed = re.search(r"\{(\w+)(?=[/{]|$)(?!\})", path)
-    if unclosed:
-        logger.warning("Path template has unclosed brace, fixing: %s", original)
-        path = re.sub(r"\{(\w+)(?=[/{]|$)(?!\})", r"{\1}", path)
-
-    # Remove stray closing braces: any } not part of a {param} pair.
-    # After all fixes above, well-formed params are {word_chars}.
-    # Rebuild by removing } that aren't part of {...}.
-    if path.count("{") != path.count("}"):
-        logger.warning("Path template has mismatched braces, fixing: %s", path)
-        # Remove } not preceded by a matching {
-        fixed_parts: list[str] = []
-        i = 0
-        while i < len(path):
-            if path[i] == "{":
-                close = path.find("}", i)
-                if close == -1:
-                    # Unclosed { at end — already handled above, skip the {
-                    fixed_parts.append(path[i + 1:])
-                    break
-                fixed_parts.append(path[i:close + 1])
-                i = close + 1
-            elif path[i] == "}":
-                # Stray } — skip it
-                i += 1
-            else:
-                fixed_parts.append(path[i])
-                i += 1
-        path = "".join(fixed_parts)
-        path = re.sub(r"//+", "/", path)
-
-    # Fix unresolved route constraints: {param:constraint} → {param}
-    # This is a fallback — the LLM should resolve these, but if it doesn't,
+    # Strip unresolved route constraints: {param:constraint} → {param}
+    # Fallback — the LLM should resolve these, but if it doesn't,
     # infrastructure strips the constraint to produce valid OpenAPI.
     constraint_pattern = re.compile(r"\{(\w+):[^}]+\}")
     if constraint_pattern.search(path):
@@ -165,15 +176,6 @@ def _sanitize_path_template(path: str) -> str:
             path,
         )
         path = constraint_pattern.sub(r"{\1}", path)
-
-    # Validate each {param} segment
-    for match in re.finditer(r"\{([^}]*)\}", path):
-        param_name = match.group(1)
-        if not _VALID_PARAM.match(param_name):
-            logger.warning(
-                "Path parameter name is not a valid identifier: {%s} in %s",
-                param_name, path,
-            )
 
     # Remove trailing slash (except for root "/")
     if len(path) > 1 and path.endswith("/"):
@@ -520,6 +522,11 @@ def assemble_spec(
         for ep in desc.endpoints:
             path_key = _normalize_path(manifest.base_path, ep.path)
             method = ep.method.lower()
+
+            # Reconcile parameter names with the normalized path template.
+            # If normalize_path changed param names (e.g. stripping constraints),
+            # the parameter objects must match what's in the path.
+            _reconcile_path_params(path_key, ep)
 
             if path_key not in spec["paths"]:
                 spec["paths"][path_key] = {}
