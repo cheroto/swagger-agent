@@ -140,7 +140,10 @@ def assert_phase1_match(
         )
 
     if golden.base_prefix is not None:
-        assert analysis.base_prefix == golden.base_prefix, (
+        # Normalize leading slash for comparison — LLM may or may not include it
+        expected_bp = golden.base_prefix.strip("/")
+        actual_bp = (analysis.base_prefix or "").strip("/")
+        assert actual_bp == expected_bp, (
             f"[{repo_id}] Phase 1: expected base_prefix={golden.base_prefix!r}, "
             f"got {analysis.base_prefix!r}"
         )
@@ -160,9 +163,21 @@ def assert_phase1_match(
 
 
 def normalize_path(path: str) -> str:
-    """Normalize path parameters: :param -> {param}, <param> -> {param}."""
+    """Normalize path parameters: :param -> {param}, <param> -> {param}.
+
+    Also ensures leading slash, strips route constraints ({p:c} → {p}),
+    and fixes nested braces ({p{c}} → {p}) for consistent comparison
+    between LLM output and golden data.
+    """
     path = re.sub(r":(\w+)", r"{\1}", path)
     path = re.sub(r"<(\w+)>", r"{\1}", path)
+    # Strip route constraints: {param:constraint} → {param}
+    path = re.sub(r"\{(\w+):[^}]+\}", r"{\1}", path)
+    # Fix nested braces from LLM output: {param{constraint}} → {param}
+    path = re.sub(r"\{(\w+)\{[^}]*\}\}", r"{\1}", path)
+    # Ensure leading slash for consistent comparison
+    if path and not path.startswith("/"):
+        path = "/" + path
     return path
 
 

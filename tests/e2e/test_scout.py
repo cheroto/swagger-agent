@@ -188,6 +188,46 @@ SCOUT_GOLDEN: list[ScoutGolden] = [
         servers=[],  # API Gateway URL is dynamic
         base_path="",
     ),
+    # -----------------------------------------------------------------------
+    # 9. dotnet-clean-architecture — ASP.NET Core Minimal APIs
+    # Uses IEndpointGroup interface pattern with reflection-based discovery.
+    # 4 endpoint groups: TodoItems, TodoLists, Users, WeatherForecasts.
+    # Route files are in src/Web/Endpoints/.
+    # Also has infrastructure files for route registration.
+    # Default port 5001 (HTTPS) / 5000 (HTTP).
+    # -----------------------------------------------------------------------
+    ScoutGolden(
+        repo_id="dotnet-clean-architecture",
+        repo_dir="dotnet-clean-architecture",
+        framework="aspnetcore",
+        language="csharp",
+        route_files=[
+            "src/Web/Endpoints/TodoItems.cs",
+            "src/Web/Endpoints/TodoLists.cs",
+            "src/Web/Endpoints/Users.cs",
+            "src/Web/Endpoints/WeatherForecasts.cs",
+        ],
+        min_route_files=4,
+        servers=["localhost"],
+        base_path="/api",
+    ),
+    # -----------------------------------------------------------------------
+    # 10. dotnet-bitwarden — ASP.NET Core (massive repo, 119 controllers)
+    # Traditional [ApiController] with attribute routing.
+    # Controllers spread across src/Api/ with domain-organized subdirs.
+    # Heavy use of {id:guid} route constraints. Class-level [Authorize].
+    # Many route files — Scout must find at least some key controllers.
+    # -----------------------------------------------------------------------
+    ScoutGolden(
+        repo_id="dotnet-bitwarden",
+        repo_dir="dotnet-bitwarden",
+        framework="aspnetcore",
+        language="csharp",
+        route_files=[],  # Too many controllers (119) — just check count
+        min_route_files=20,  # Has 119 controllers, should find many
+        servers=["localhost"],
+        base_path=None,  # Don't check — varies by Scout exploration
+    ),
 ]
 
 

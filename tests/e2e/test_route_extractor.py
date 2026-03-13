@@ -741,6 +741,297 @@ ROUTE_GOLDEN: list[RouteGolden] = [
             required_import_substrings=["aws-lambda", "DynamoDB"],
         ),
     ),
+    # -----------------------------------------------------------------------
+    # 9. dotnet-clean-architecture — ASP.NET Core Minimal APIs (TodoItems.cs)
+    # Uses IEndpointGroup with MapGet/MapPost/MapPut/MapPatch/MapDelete.
+    # Route prefix: /api/TodoItems (derived from class name).
+    # All endpoints require authorization via RequireAuthorization().
+    # 5 endpoints: GET (paginated), POST, PUT {id}, PATCH UpdateDetail/{id},
+    #              DELETE {id}.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="dotnet-clean-architecture-todoitems",
+        repo_dir="dotnet-clean-architecture",
+        route_file="src/Web/Endpoints/TodoItems.cs",
+        framework="aspnetcore",
+        base_path="/api/TodoItems",
+        min_endpoints=5,
+        endpoints=[
+            ExpectedEndpoint(
+                method="GET",
+                path="/api/TodoItems",
+                has_auth=True,
+                has_request_body=False,
+            ),
+            ExpectedEndpoint(
+                method="POST",
+                path="/api/TodoItems",
+                has_auth=True,
+                has_request_body=True,
+            ),
+            ExpectedEndpoint(
+                method="PUT",
+                path="/api/TodoItems/{id}",
+                has_auth=True,
+                has_request_body=True,
+                param_names=["id"],
+            ),
+            ExpectedEndpoint(
+                method="PATCH",
+                path="/api/TodoItems/UpdateDetail/{id}",
+                has_auth=True,
+                has_request_body=True,
+                param_names=["id"],
+            ),
+            ExpectedEndpoint(
+                method="DELETE",
+                path="/api/TodoItems/{id}",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["id"],
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=5,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/api/TodoItems"),
+                ExpectedPhase1Endpoint(method="POST", path="/api/TodoItems"),
+                ExpectedPhase1Endpoint(method="PUT", path="/api/TodoItems/{id}"),
+                ExpectedPhase1Endpoint(method="PATCH", path="/api/TodoItems/UpdateDetail/{id}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/api/TodoItems/{id}"),
+            ],
+            has_auth_patterns=True,  # RequireAuthorization()
+            base_prefix="/api/TodoItems",
+            path_param_syntax="{",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # 10. dotnet-clean-architecture — ASP.NET Core Minimal APIs (TodoLists.cs)
+    # Route prefix: /api/TodoLists.
+    # All endpoints require authorization. 4 endpoints: GET, POST, PUT, DELETE.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="dotnet-clean-architecture-todolists",
+        repo_dir="dotnet-clean-architecture",
+        route_file="src/Web/Endpoints/TodoLists.cs",
+        framework="aspnetcore",
+        base_path="/api/TodoLists",
+        min_endpoints=4,
+        endpoints=[
+            ExpectedEndpoint(
+                method="GET",
+                path="/api/TodoLists",
+                has_auth=True,
+                has_request_body=False,
+            ),
+            ExpectedEndpoint(
+                method="POST",
+                path="/api/TodoLists",
+                has_auth=True,
+                has_request_body=True,
+            ),
+            ExpectedEndpoint(
+                method="PUT",
+                path="/api/TodoLists/{id}",
+                has_auth=True,
+                has_request_body=True,
+                param_names=["id"],
+            ),
+            ExpectedEndpoint(
+                method="DELETE",
+                path="/api/TodoLists/{id}",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["id"],
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=4,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/api/TodoLists"),
+                ExpectedPhase1Endpoint(method="POST", path="/api/TodoLists"),
+                ExpectedPhase1Endpoint(method="PUT", path="/api/TodoLists/{id}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/api/TodoLists/{id}"),
+            ],
+            has_auth_patterns=True,
+            base_prefix="/api/TodoLists",
+            path_param_syntax="{",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # 11. dotnet-bitwarden — ASP.NET Core (FoldersController.cs)
+    # Traditional [ApiController] with [Route("folders")] and
+    # class-level [Authorize("Application")].
+    # 8 endpoints: GET {id}, GET (list all), POST, PUT {id},
+    #              POST {id} (deprecated PUT), DELETE {id},
+    #              POST {id}/delete (deprecated DELETE), DELETE all.
+    # No route constraints in this controller — {id} is string.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="dotnet-bitwarden-folders",
+        repo_dir="dotnet-bitwarden",
+        route_file="src/Api/Vault/Controllers/FoldersController.cs",
+        framework="aspnetcore",
+        base_path="",
+        min_endpoints=6,  # Allow some variance — deprecated endpoints may be skipped
+        endpoints=[
+            ExpectedEndpoint(
+                method="GET",
+                path="/folders/{id}",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["id"],
+            ),
+            ExpectedEndpoint(
+                method="GET",
+                path="/folders",
+                has_auth=True,
+                has_request_body=False,
+            ),
+            ExpectedEndpoint(
+                method="POST",
+                path="/folders",
+                has_auth=True,
+                has_request_body=True,
+            ),
+            ExpectedEndpoint(
+                method="PUT",
+                path="/folders/{id}",
+                has_auth=True,
+                has_request_body=True,
+                param_names=["id"],
+            ),
+            ExpectedEndpoint(
+                method="DELETE",
+                path="/folders/{id}",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["id"],
+            ),
+            ExpectedEndpoint(
+                method="DELETE",
+                path="/folders/all",
+                has_auth=True,
+                has_request_body=False,
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=6,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/folders/{id}"),
+                ExpectedPhase1Endpoint(method="GET", path="/folders"),
+                ExpectedPhase1Endpoint(method="POST", path="/folders"),
+                ExpectedPhase1Endpoint(method="PUT", path="/folders/{id}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/folders/{id}"),
+                ExpectedPhase1Endpoint(method="DELETE", path="/folders/all"),
+            ],
+            has_auth_patterns=True,  # [Authorize("Application")] on class
+            has_auth_imports=True,
+            base_prefix="/folders",
+            path_param_syntax="{",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # 12. dotnet-bitwarden — ASP.NET Core (SecurityTaskController.cs)
+    # [Route("tasks")] with [Authorize("Application")].
+    # Has {taskId:guid} and {organizationId:guid} route constraints.
+    # 5 endpoints: GET (list), PATCH {taskId:guid}/complete,
+    #              GET organization (query param), GET {organizationId:guid}/metrics,
+    #              POST {orgId:guid}/bulk-create.
+    # Tests route constraint handling.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="dotnet-bitwarden-securitytask",
+        repo_dir="dotnet-bitwarden",
+        route_file="src/Api/Vault/Controllers/SecurityTaskController.cs",
+        framework="aspnetcore",
+        base_path="",
+        min_endpoints=5,
+        endpoints=[
+            ExpectedEndpoint(
+                method="GET",
+                path="/tasks",
+                has_auth=True,
+                has_request_body=False,
+                # status is an optional [FromQuery] param — LLM may miss it
+            ),
+            ExpectedEndpoint(
+                method="PATCH",
+                path="/tasks/{taskId}/complete",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["taskId"],
+            ),
+            ExpectedEndpoint(
+                method="GET",
+                path="/tasks/organization",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["organizationId"],
+            ),
+            ExpectedEndpoint(
+                method="GET",
+                path="/tasks/{organizationId}/metrics",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["organizationId"],
+            ),
+            ExpectedEndpoint(
+                method="POST",
+                path="/tasks/{orgId}/bulk-create",
+                has_auth=True,
+                has_request_body=True,
+                param_names=["orgId"],
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=5,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/tasks"),
+                ExpectedPhase1Endpoint(method="PATCH", path="/tasks/{taskId}/complete"),
+                ExpectedPhase1Endpoint(method="GET", path="/tasks/organization"),
+                ExpectedPhase1Endpoint(method="GET", path="/tasks/{organizationId}/metrics"),
+                ExpectedPhase1Endpoint(method="POST", path="/tasks/{orgId}/bulk-create"),
+            ],
+            has_auth_patterns=True,
+            has_auth_imports=True,
+            base_prefix="/tasks",
+            path_param_syntax="{",
+        ),
+    ),
+    # -----------------------------------------------------------------------
+    # 13. dotnet-bitwarden — ASP.NET Core (SyncController.cs)
+    # [Route("sync")] with [Authorize("Application")].
+    # Single endpoint: GET with excludeDomains query param.
+    # Tests simple controller with class-level auth.
+    # -----------------------------------------------------------------------
+    RouteGolden(
+        repo_id="dotnet-bitwarden-sync",
+        repo_dir="dotnet-bitwarden",
+        route_file="src/Api/Vault/Controllers/SyncController.cs",
+        framework="aspnetcore",
+        base_path="",
+        min_endpoints=1,
+        endpoints=[
+            ExpectedEndpoint(
+                method="GET",
+                path="/sync",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["excludeDomains"],
+            ),
+        ],
+        phase1=Phase1Golden(
+            min_endpoints=1,
+            endpoints=[
+                ExpectedPhase1Endpoint(method="GET", path="/sync"),
+            ],
+            has_auth_patterns=True,
+            has_auth_imports=True,
+            base_prefix="/sync",
+            path_param_syntax=None,  # No path params in this controller
+        ),
+    ),
 ]
 
 

@@ -138,17 +138,16 @@ def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
                 break
         return
 
-    # Multiple mismatches: try to match by original path order
-    # Extract {param} positions from the original endpoint path
-    orig_params = re.findall(r"\{(\w+?)(?::\w+)?\}", ep.path)
+    # Multiple mismatches: match by segment position in the path.
+    # Extract {param} positions from the normalized path and original path,
+    # then pair up extras/missing by their order of appearance.
     norm_params = re.findall(r"\{(\w+)\}", path_key)
+    extra_ordered = [p for p in norm_params if p in missing_in_ep]
+    # Order the extra EP params by their position in the EP's parameter list
+    ep_extra_ordered = [p.name for p in ep.parameters if p.in_ == "path" and p.name in extra_in_ep]
 
-    if len(orig_params) == len(norm_params):
-        rename_map = {}
-        for orig, norm in zip(orig_params, norm_params):
-            if orig != norm and orig in extra_in_ep and norm in missing_in_ep:
-                rename_map[orig] = norm
-
+    if len(extra_ordered) == len(ep_extra_ordered):
+        rename_map = dict(zip(ep_extra_ordered, extra_ordered))
         for p in ep.parameters:
             if p.in_ == "path" and p.name in rename_map:
                 logger.info(

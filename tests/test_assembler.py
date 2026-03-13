@@ -6,12 +6,17 @@ from swagger_agent.infra.assembler import (
     _build_ref,
     _deduplicate_operation_ids,
     _fix_ref_siblings,
+    _normalize_path,
+    _reconcile_path_params,
+    _replace_outside_braces,
+    _sanitize_path_template,
     assemble_spec,
 )
 from swagger_agent.models import (
     DiscoveryManifest,
     Endpoint,
     EndpointDescriptor,
+    Parameter,
     RefHint,
     RequestBody,
     Response,
@@ -343,3 +348,215 @@ class TestAssembleSpecIntegration:
                 if isinstance(items, dict) and "x-circular-ref" in items:
                     has_circular = True
         assert has_circular
+
+
+# --- Path template normalization ---
+
+
+class TestNormalizePath:
+    def test_colon_param_conversion(self):
+        assert _normalize_path("", "/users/:id") == "/users/{id}"
+
+    def test_angle_bracket_param_conversion(self):
+        assert _normalize_path("", "/users/<id>") == "/users/{id}"
+
+    def test_base_path_deduplication(self):
+        """When endpoint path already contains base_path, don't double it."""
+        result = _normalize_path("/api/v1", "/api/v1/users")
+        assert result == "/api/v1/users"
+
+    def test_base_path_prepended(self):
+        result = _normalize_path("/api", "/users")
+        assert result == "/api/users"
+
+    def test_constraint_stripped(self):
+        """Route constraints like {id:guid} are stripped to {id}."""
+        result = _normalize_path("", "/tasks/{taskId:guid}/complete")
+        assert result == "/tasks/{taskId}/complete"
+
+    def test_colon_not_applied_inside_braces(self):
+        """Colon inside {param:constraint} must NOT trigger :param conversion."""
+        result = _normalize_path("", "/v{version:apiVersion}/users")
+        # Should strip constraint, not create nested braces
+        assert result == "/v{version}/users"
+        assert "{{" not in result
+
+    def test_trailing_slash_removed(self):
+        result = _normalize_path("", "/users/")
+        assert result == "/users"
+
+    def test_root_path_preserved(self):
+        result = _normalize_path("", "/")
+        assert result == "/"
+
+    def test_double_slashes_collapsed(self):
+        result = _normalize_path("/api/", "/users")
+        assert result == "/api/users"
+
+
+class TestReplaceOutsideBraces:
+    def test_colon_outside_braces_replaced(self):
+        result = _replace_outside_braces("/users/:id", r":(\w+)", r"{\1}")
+        assert result == "/users/{id}"
+
+    def test_colon_inside_braces_preserved(self):
+        result = _replace_outside_braces("/{version:apiVersion}/users", r":(\w+)", r"{\1}")
+        assert result == "/{version:apiVersion}/users"
+
+    def test_mixed_inside_outside(self):
+        result = _replace_outside_braces("/:prefix/{version:constraint}/:suffix", r":(\w+)", r"{\1}")
+        assert result == "/{prefix}/{version:constraint}/{suffix}"
+
+
+class TestSanitizePathTemplate:
+    def test_constraint_stripped(self):
+        result = _sanitize_path_template("/tasks/{taskId:guid}/complete")
+        assert result == "/tasks/{taskId}/complete"
+
+    def test_multiple_constraints(self):
+        result = _sanitize_path_template("/orgs/{orgId:guid}/users/{userId:int}")
+        assert result == "/orgs/{orgId}/users/{userId}"
+
+    def test_no_constraint_unchanged(self):
+        result = _sanitize_path_template("/users/{id}")
+        assert result == "/users/{id}"
+
+    def test_trailing_slash_removed(self):
+        result = _sanitize_path_template("/users/{id}/")
+        assert result == "/users/{id}"
+
+
+class TestReconcilePathParams:
+    def test_single_mismatch_renamed(self):
+        """After constraint stripping: path says {version}, param says apiVersion."""
+        ep = Endpoint(
+            method="GET",
+            path="/v{version:apiVersion}/users",
+            operation_id="GetUsers",
+            parameters=[
+                Parameter(name="apiVersion", in_="path", required=True),
+            ],
+        )
+        _reconcile_path_params("/v{version}/users", ep)
+        assert ep.parameters[0].name == "version"
+
+    def test_no_mismatch_unchanged(self):
+        ep = Endpoint(
+            method="GET",
+            path="/users/{id}",
+            operation_id="GetUser",
+            parameters=[
+                Parameter(name="id", in_="path", required=True),
+            ],
+        )
+        _reconcile_path_params("/users/{id}", ep)
+        assert ep.parameters[0].name == "id"
+
+    def test_query_params_not_affected(self):
+        ep = Endpoint(
+            method="GET",
+            path="/users/{id}",
+            operation_id="GetUser",
+            parameters=[
+                Parameter(name="id", in_="path", required=True),
+                Parameter(name="page", in_="query"),
+            ],
+        )
+        _reconcile_path_params("/users/{id}", ep)
+        assert ep.parameters[0].name == "id"
+        assert ep.parameters[1].name == "page"
+
+    def test_multiple_mismatches_by_position(self):
+        ep = Endpoint(
+            method="GET",
+            path="/v{version:apiVersion}/{resource:resourceType}/items",
+            operation_id="GetItems",
+            parameters=[
+                Parameter(name="apiVersion", in_="path", required=True),
+                Parameter(name="resourceType", in_="path", required=True),
+            ],
+        )
+        _reconcile_path_params("/v{version}/{resource}/items", ep)
+        assert ep.parameters[0].name == "version"
+        assert ep.parameters[1].name == "resource"
+
+    def test_no_params_noop(self):
+        ep = Endpoint(
+            method="GET",
+            path="/health",
+            operation_id="Health",
+        )
+        _reconcile_path_params("/health", ep)  # Should not raise
+
+    def test_guid_constraint_reconciliation(self):
+        """Bitwarden-style: {taskId:guid} → {taskId}, param already correct."""
+        ep = Endpoint(
+            method="PATCH",
+            path="/tasks/{taskId:guid}/complete",
+            operation_id="Complete",
+            parameters=[
+                Parameter(name="taskId", in_="path", required=True),
+            ],
+        )
+        _reconcile_path_params("/tasks/{taskId}/complete", ep)
+        # No mismatch — taskId stays taskId
+        assert ep.parameters[0].name == "taskId"
+
+
+# --- Integration: path normalization + reconciliation in assemble_spec ---
+
+
+class TestAssembleSpecPathHandling:
+    def test_route_constraint_stripped_in_spec(self):
+        """Endpoints with {param:constraint} produce valid {param} paths in spec."""
+        manifest = _make_manifest()
+        manifest.base_path = ""
+        descriptors = [
+            EndpointDescriptor(
+                source_file="SecurityTaskController.cs",
+                endpoints=[
+                    Endpoint(
+                        method="PATCH",
+                        path="/tasks/{taskId:guid}/complete",
+                        operation_id="Complete",
+                        parameters=[
+                            Parameter(name="taskId", in_="path", required=True),
+                        ],
+                    ),
+                ],
+            )
+        ]
+        result = assemble_spec(manifest, descriptors, {})
+        # Path should have constraint stripped
+        assert "/tasks/{taskId}/complete" in result.spec["paths"]
+        # Param name should match path template
+        params = result.spec["paths"]["/tasks/{taskId}/complete"]["patch"].get("parameters", [])
+        path_params = [p for p in params if p["in"] == "path"]
+        assert len(path_params) == 1
+        assert path_params[0]["name"] == "taskId"
+
+    def test_param_reconciliation_in_assembly(self):
+        """Param name mismatch after constraint stripping is fixed during assembly."""
+        manifest = _make_manifest()
+        manifest.base_path = ""
+        descriptors = [
+            EndpointDescriptor(
+                source_file="VersionedController.cs",
+                endpoints=[
+                    Endpoint(
+                        method="GET",
+                        path="/v{version:apiVersion}/items",
+                        operation_id="GetItems",
+                        parameters=[
+                            Parameter(name="apiVersion", in_="path", required=True),
+                        ],
+                    ),
+                ],
+            )
+        ]
+        result = assemble_spec(manifest, descriptors, {})
+        assert "/v{version}/items" in result.spec["paths"]
+        params = result.spec["paths"]["/v{version}/items"]["get"].get("parameters", [])
+        path_params = [p for p in params if p["in"] == "path"]
+        assert len(path_params) == 1
+        assert path_params[0]["name"] == "version"

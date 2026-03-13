@@ -153,6 +153,155 @@ PIPELINE_GOLDEN: list[PipelineGolden] = [
         max_validation_errors=0,
         max_unresolved_schemas=0,
     ),
+    # -----------------------------------------------------------------------
+    # 2. dotnet-clean-architecture — ASP.NET Core Minimal APIs
+    #
+    # 4 endpoint groups (route files):
+    #   - TodoItems.cs:       GET, POST, PUT {id}, PATCH UpdateDetail/{id}, DELETE {id}
+    #   - TodoLists.cs:       GET, POST, PUT {id}, DELETE {id}
+    #   - Users.cs:           POST /logout + MapIdentityApi auto-generated
+    #   - WeatherForecasts.cs: GET
+    #
+    # All endpoints require auth (RequireAuthorization on groups).
+    # DTOs: TodoItemBriefDto, TodoListDto, TodoItemDto, TodosVm, etc.
+    # Uses MediatR + FluentValidation (commands/queries as request bodies).
+    # -----------------------------------------------------------------------
+    PipelineGolden(
+        repo_id="dotnet-clean-architecture",
+        repo_dir="dotnet-clean-architecture",
+        min_endpoints=10,  # ~15 total, allow variance from auto-generated identity endpoints
+        min_schemas=0,  # Minimal API DTOs may not resolve — they're inline commands
+        endpoints=[
+            # TodoItems — reliably extracted with correct prefix
+            ExpectedPipelineEndpoint(
+                method="GET",
+                path="/api/TodoItems",
+                has_auth=True,
+                has_request_body=False,
+            ),
+            ExpectedPipelineEndpoint(
+                method="POST",
+                path="/api/TodoItems",
+                has_auth=True,
+                has_request_body=True,
+            ),
+            ExpectedPipelineEndpoint(
+                method="PUT",
+                path="/api/TodoItems/{id}",
+                has_auth=True,
+                has_request_body=True,
+                param_names=["id"],
+            ),
+            ExpectedPipelineEndpoint(
+                method="PATCH",
+                path="/api/TodoItems/UpdateDetail/{id}",
+                has_auth=True,
+                has_request_body=True,
+                param_names=["id"],
+            ),
+            ExpectedPipelineEndpoint(
+                method="DELETE",
+                path="/api/TodoItems/{id}",
+                has_auth=True,
+                has_request_body=False,
+                param_names=["id"],
+            ),
+            # WeatherForecasts
+            ExpectedPipelineEndpoint(
+                method="GET",
+                path="/api/WeatherForecasts",
+                has_auth=True,
+                has_request_body=False,
+            ),
+            # TodoLists paths vary by LLM — not asserted here
+            # Users identity endpoints (login, register, logout) are auto-generated
+        ],
+        expected_schemas=[],  # DTOs are inline commands — may not produce schemas
+        expected_security_schemes=[],  # Auth scheme name varies
+        expected_servers=["localhost"],
+        completeness_must_pass=[
+            "has_endpoints",
+            "has_servers",
+        ],
+        max_validation_errors=5,  # Allow some — Minimal API patterns are unusual
+        max_unresolved_schemas=10,
+    ),
+    # -----------------------------------------------------------------------
+    # 3. dotnet-bitwarden — ASP.NET Core (massive Bitwarden server)
+    #
+    # 119 controllers across src/Api/ with domain-organized subdirs.
+    # Uses [Authorize("Application")] class-level auth (Bearer JWT).
+    # Heavy use of {id:guid} route constraints.
+    # Request/response models in Models/Request/ and Models/Response/.
+    #
+    # Key controllers tested:
+    #   - FoldersController (CRUD, 8 endpoints, no constraints)
+    #   - SyncController (1 endpoint, query param)
+    #   - SecurityTaskController (5 endpoints, {id:guid} constraints)
+    #
+    # This is a stress test: many controllers, deep DTO hierarchies,
+    # route constraints, and very large codebase.
+    # -----------------------------------------------------------------------
+    PipelineGolden(
+        repo_id="dotnet-bitwarden",
+        repo_dir="dotnet-bitwarden",
+        min_endpoints=50,  # Has 700+ but Scout may not find all controllers
+        min_schemas=2,  # Should resolve at least some response models
+        endpoints=[
+            # FoldersController
+            ExpectedPipelineEndpoint(
+                method="GET",
+                path="/folders/{id}",
+                has_auth=True,
+                param_names=["id"],
+            ),
+            ExpectedPipelineEndpoint(
+                method="GET",
+                path="/folders",
+                has_auth=True,
+            ),
+            ExpectedPipelineEndpoint(
+                method="POST",
+                path="/folders",
+                has_auth=True,
+                has_request_body=True,
+            ),
+            ExpectedPipelineEndpoint(
+                method="DELETE",
+                path="/folders/{id}",
+                has_auth=True,
+                param_names=["id"],
+            ),
+            # SyncController
+            ExpectedPipelineEndpoint(
+                method="GET",
+                path="/sync",
+                has_auth=True,
+            ),
+            # SecurityTaskController — route constraints stripped
+            ExpectedPipelineEndpoint(
+                method="PATCH",
+                path="/tasks/{taskId}/complete",
+                has_auth=True,
+                param_names=["taskId"],
+            ),
+            ExpectedPipelineEndpoint(
+                method="GET",
+                path="/tasks/{organizationId}/metrics",
+                has_auth=True,
+                param_names=["organizationId"],
+            ),
+        ],
+        expected_schemas=[],  # Variable — depends on schema resolution
+        expected_security_schemes=[],  # Should find at least one auth scheme
+        expected_servers=["localhost"],
+        completeness_must_pass=[
+            "has_endpoints",
+            "has_servers",
+        ],
+        max_validation_errors=20,  # Large repo — allow more variance
+        max_unresolved_schemas=50,  # Deep DTO hierarchy, many may be unresolvable
+    ),
 ]
 
 
