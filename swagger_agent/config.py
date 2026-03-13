@@ -5,6 +5,16 @@ from openai import OpenAI
 from pydantic_settings import BaseSettings
 
 
+# Map string names to instructor.Mode values for .env configuration
+_INSTRUCTOR_MODES: dict[str, instructor.Mode] = {
+    "tools": instructor.Mode.TOOLS,
+    "json": instructor.Mode.JSON,
+    "json_schema": instructor.Mode.JSON_SCHEMA,
+    "md_json": instructor.Mode.MD_JSON,
+    "openrouter_structured_outputs": instructor.Mode.OPENROUTER_STRUCTURED_OUTPUTS,
+}
+
+
 class LLMConfig(BaseSettings):
     model_config = {"env_prefix": "", "env_file": ".env"}
 
@@ -15,6 +25,7 @@ class LLMConfig(BaseSettings):
     llm_temperature: float = 0.0
     llm_max_tokens: int = 16384
     instructor_max_retries: int = 3
+    instructor_mode: str = "tools"
 
     # Per-agent overrides
     llm_model_scout: str = ""
@@ -43,7 +54,8 @@ def make_client(config: LLMConfig, agent: str) -> tuple[instructor.Instructor, s
     """Create an instructor-patched OpenAI client for a specific agent."""
     base_url, model = config.for_agent(agent)
     raw_client = OpenAI(base_url=base_url, api_key=config.llm_api_key)
-    return instructor.from_openai(raw_client), model
+    mode = _INSTRUCTOR_MODES.get(config.instructor_mode.lower(), instructor.Mode.TOOLS)
+    return instructor.from_openai(raw_client, mode=mode), model
 
 
 def make_raw_client(config: LLMConfig, agent: str) -> tuple[OpenAI, str]:

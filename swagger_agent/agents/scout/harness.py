@@ -91,6 +91,7 @@ class ScoutTurnResponse(BaseModel):
     )
 
 
+
 # --- Deterministic Trace ---
 
 
@@ -411,9 +412,11 @@ def run_scout(
     if event_handler is None:
         event_handler = ScoutEventHandler()
 
+    from swagger_agent.config import _INSTRUCTOR_MODES
     base_url, model = config.for_agent("scout")
     raw_client = OpenAI(base_url=base_url, api_key=config.llm_api_key)
-    client = instructor.from_openai(raw_client)
+    mode = _INSTRUCTOR_MODES.get(config.instructor_mode.lower(), instructor.Mode.TOOLS)
+    client = instructor.from_openai(raw_client, mode=mode)
 
     tools = build_scout_tools(target_dir)
 
