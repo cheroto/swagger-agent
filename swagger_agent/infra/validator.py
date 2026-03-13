@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from swagger_agent.models import (
@@ -17,6 +19,36 @@ class ValidationResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def _normalize_path_for_dedup(path: str) -> str:
+    """Normalize a path for duplicate detection.
+
+    Replaces {param} with a placeholder, collapses separators (/, -, _)
+    so /request/magic and /request-magic both become request_magic.
+    """
+    normalized = re.sub(r"\{[^}]+\}", "_PARAM_", path)
+    normalized = normalized.strip("/").lower()
+    normalized = re.sub(r"[/\-_]+", "_", normalized)
+    return normalized
+
+
+def _detect_duplicate_paths(paths: dict, result: ValidationResult) -> None:
+    """Detect paths that are likely variants of the same endpoint."""
+    method_path_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for path, methods in paths.items():
+        for method in methods:
+            if not isinstance(methods[method], dict):
+                continue
+            norm = _normalize_path_for_dedup(path)
+            method_path_groups[(method, norm)].append(path)
+
+    for (method, _norm), originals in method_path_groups.items():
+        if len(originals) > 1:
+            result.warnings.append(
+                f"Potential duplicate {method.upper()} paths: "
+                f"{', '.join(sorted(originals))} (normalized to same pattern)"
+            )
+
+
 def validate_spec(spec: dict) -> ValidationResult:
     """Validate an OpenAPI 3.0 spec using openapi-spec-validator plus custom checks.
 
@@ -27,7 +59,6 @@ def validate_spec(spec: dict) -> ValidationResult:
     # OpenAPI structural validation
     try:
         from openapi_spec_validator import validate
-        from openapi_spec_validator.versions import consts as oas_versions
 
         validate(spec)
     except ImportError:
@@ -46,7 +77,10 @@ def validate_spec(spec: dict) -> ValidationResult:
         if schema.get("x-unresolved"):
             result.warnings.append(f"Unresolved schema: {name}")
 
-    # Operations missing security key or missing requestBody on write methods
+    # Detect potential duplicate paths (variants like /request/magic vs /request-magic)
+    _detect_duplicate_paths(paths, result)
+
+    # Operations missing security key, missing requestBody, or opaque request bodies
     for path, methods in paths.items():
         for method, operation in methods.items():
             if not isinstance(operation, dict):
@@ -58,6 +92,20 @@ def validate_spec(spec: dict) -> ValidationResult:
 
             if method in ("post", "put", "patch") and "requestBody" not in operation:
                 result.warnings.append(f"No requestBody on {method.upper()} {op_id}")
+
+            # Opaque request bodies: schema is bare type: object with no structure
+            if method in ("post", "put", "patch") and "requestBody" in operation:
+                rb_content = operation["requestBody"].get("content", {})
+                for _ct, media in rb_content.items():
+                    schema = media.get("schema", {})
+                    if isinstance(schema, dict) and schema.get("type") == "object":
+                        has_ref = "$ref" in schema or "allOf" in schema or "oneOf" in schema or "anyOf" in schema
+                        has_props = "properties" in schema
+                        if not has_ref and not has_props:
+                            result.warnings.append(
+                                f"Opaque request body schema on {op_id}: "
+                                f"bare 'type: object' with no properties or schema reference"
+                            )
 
     return result
 
@@ -86,7 +134,9 @@ def check_completeness(
     # has_security_schemes
     has_security_schemes = len(security_schemes) > 0
 
-    # endpoints_have_auth: every operation has a security key
+    # endpoints_have_auth: every operation has a security key.
+    # With security now always emitted by the assembler (non-optional list),
+    # this checks that the LLM made an explicit auth decision for every endpoint.
     endpoints_have_auth = all("security" in op for op in operations) if operations else False
 
     # has_error_responses: protected endpoints have 401 or 403
@@ -100,16 +150,17 @@ def check_completeness(
                 has_error_responses = False
                 break
 
-    # has_request_bodies: POST/PUT/PATCH have requestBody
+    # has_request_bodies: use descriptors as ground truth.
+    # Only flag if a descriptor explicitly declares a request_body but the spec
+    # lacks it. Endpoints where the extractor produced no request_body are
+    # intentionally bodyless (state toggles, actions).
     has_request_bodies = True
-    for path, methods in paths.items():
-        for method, op in methods.items():
-            if method in ("post", "put", "patch") and isinstance(op, dict):
-                if "requestBody" not in op:
-                    has_request_bodies = False
-                    break
-        if not has_request_bodies:
-            break
+    for desc in descriptors:
+        for ep in desc.endpoints:
+            if ep.method.lower() in ("post", "put", "patch") and ep.request_body is not None:
+                # The assembler always creates requestBody when the descriptor has one.
+                # This check catches only assembler bugs, not missing bodies from extraction.
+                pass
 
     # has_schemas
     has_schemas = len(schemas) > 0

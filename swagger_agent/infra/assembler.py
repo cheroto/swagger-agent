@@ -307,14 +307,25 @@ def _build_operation(ep: Endpoint) -> dict:
     else:
         op["responses"] = {"200": {"description": "OK"}}
 
-    # Security
-    if ep.security is not None:
-        if len(ep.security) == 0:
-            op["security"] = []  # explicitly public
-        else:
-            op["security"] = [{scheme: []} for scheme in ep.security]
+    # Security — always emit (security is now a required list, never None)
+    if len(ep.security) == 0:
+        op["security"] = []  # explicitly public
+    else:
+        op["security"] = [{scheme: []} for scheme in ep.security]
 
     return op
+
+
+def _strip_empty_required(obj: object) -> None:
+    """Remove 'required': [] from schemas (OpenAPI 3.0 requires non-empty if present)."""
+    if isinstance(obj, dict):
+        if "required" in obj and isinstance(obj["required"], list) and len(obj["required"]) == 0:
+            del obj["required"]
+        for v in obj.values():
+            _strip_empty_required(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _strip_empty_required(item)
 
 
 def _deduplicate_operation_ids(spec: dict) -> None:
@@ -582,6 +593,8 @@ def assemble_spec(
     _break_ref_cycles(spec)
     # 3. Deduplicate operationIds
     _deduplicate_operation_ids(spec)
+    # 4. Strip empty "required" arrays (OpenAPI 3.0 violation)
+    _strip_empty_required(spec)
 
     # Remove empty schemas
     if not spec["components"]["schemas"]:

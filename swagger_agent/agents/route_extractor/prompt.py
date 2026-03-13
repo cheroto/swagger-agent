@@ -288,37 +288,13 @@ You receive:
 
 Return an EndpointDescriptor with a list of Endpoint objects. Each endpoint has:
 
-```
-Endpoint:
-  method: string          # GET, POST, PUT, PATCH, DELETE (uppercase)
-  path: string            # Full path including base_path (e.g. "/api/users/:username")
-  operation_id: string    # Derived from handler function name (e.g. "getUser")
-  tags: list[string]      # Grouping tags (e.g. ["Users"])
-  security: list[string] | null  # Security scheme names, null = inherit default, [] = explicitly public
-  parameters: list[Parameter]
-  request_body: RequestBody | null
-  responses: list[Response]
+The output schema is provided via the tool/function definition. Key semantic notes:
 
-Parameter:
-  name: string
-  in: "path" | "query" | "header" | "cookie"
-  required: bool          # Path params are always required
-  schema: dict            # JSON Schema (e.g. {"type": "string"})
-
-RequestBody:
-  content_type: string    # "application/json", "multipart/form-data", "application/x-www-form-urlencoded"
-  schema_ref: RefHint | null
-
-Response:
-  status_code: string     # "200", "401", "403", "404", "422", etc.
-  description: string     # Brief description
-  schema_ref: RefHint | null
-
-RefHint:
-  ref_hint: string        # Type name as it appears in code (e.g. "UserResponse")
-  import_source: string | null  # The raw import line (e.g. "from app.schemas.user import UserResponse")
-  resolution: "import" | "class_to_file" | "unresolvable"
-```
+- **security**: [] = public (no auth). ["BearerAuth"] = protected. ALWAYS set explicitly, never omit.
+- **request_body**: Only include when the endpoint consumes a body. schema_ref is REQUIRED on RequestBody.
+- **import_source**: REQUIRED on every RefHint. For imports: the exact import line. For same-namespace types: the namespace/package declaration of the current file. For unresolvable: a descriptive string like "built-in" or "framework type".
+- **resolution**: "import" when you found the import line. "class_to_file" for same-namespace/package types. "unresolvable" ONLY for built-in/framework types (never for domain types like UserResponse, ArticleEnvelope).
+- **ref_hint**: Use the inner type name, strip collection wrappers. `List<Article>` → "Article".
 
 ## RefHint Rules
 
@@ -329,7 +305,8 @@ For every type reference you encounter (request bodies, response schemas, parame
    - `import_source`: the exact import statement (e.g. `"from app.schemas.user import UserResponse"`, `"const { UserResponse } = require('./schemas/user')"`, `"using Conduit.Features.Articles;"`)
 
 2. **No import found but type is used** (same-package/namespace/module, implicit):
-   - `resolution: "class_to_file"`, `import_source`: null
+   - `resolution: "class_to_file"`
+   - `import_source`: REQUIRED — set to the current file's namespace/package/module declaration (e.g. `"namespace Conduit.Features.Articles;"`, `"package com.example.users;"`, `"module UserService"`). This helps disambiguate when multiple files define types with the same name. If no namespace/package declaration exists, use the relative file path of the current route file.
    - This is COMMON: types in the same namespace (C#), same package (Java/Go), same directory (JS/TS), or same module often need no explicit import. If a type has a domain-specific name and appears in the code with no import, it is `class_to_file`.
 
 3. **Framework/language built-in types ONLY:**

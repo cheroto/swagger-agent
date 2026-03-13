@@ -4,6 +4,9 @@ from swagger_agent.infra.detectors.routes._base import RoutePattern
 
 PATTERNS: dict[str, list[RoutePattern]] = {
     "aspnetcore": [
-        ("**/*.cs", r"\[(Http(Get|Post|Put|Patch|Delete)|Route|ApiController)\]"),
+        # Traditional controllers: [HttpGet], [HttpGet("{id}")], [Route("api/[controller]")]
+        ("**/*.cs", r"\[(Http(Get|Post|Put|Patch|Delete)|Route|ApiController)(\([^]]*\))?\]"),
+        # Minimal APIs: app.MapGet("/path", handler)
+        ("**/*.cs", r"\.(Map(Get|Post|Put|Patch|Delete|Group|Methods))\s*\("),
     ],
 }

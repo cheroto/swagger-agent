@@ -43,6 +43,7 @@ _RELEVANT_KINDS = frozenset({
 _EXCLUDE_DIRS = [
     "node_modules", "venv", ".venv", "__pycache__", ".git",
     "dist", "build", "target", "vendor",
+    "tests", "test", "spec", "__tests__", "test_*",
 ]
 
 _EXCLUDE_PATTERNS = ["*.min.js", "*.lock"]
@@ -183,8 +184,8 @@ def _extract_path_fragment(import_source: str) -> str | None:
         frag = re.sub(r"^(?:\.\./|\./)+", "", frag)
         return frag
 
-    # C#: using A.B.C;
-    m = re.match(r"using\s+([\w.]+)\s*;?", import_source)
+    # C#: using/namespace A.B.C;  Java/Kotlin: package a.b.c;
+    m = re.match(r"(?:using|namespace|package)\s+([\w.]+)\s*;?", import_source)
     if m:
         return m.group(1).replace(".", "/")
 
@@ -293,8 +294,9 @@ def resolve_by_grep(
     uses import_source path fragment for disambiguation when multiple
     matches exist.
     """
+    parent_name: str | None = None
     if "." in name:
-        parent, leaf = name.rsplit(".", 1)
+        parent_name, leaf = name.rsplit(".", 1)
         # Look for "class Command" inside a file that also has "class Create"
         pattern = rf"(class|interface|type|struct|enum|record)\s+{re.escape(leaf)}\b"
     else:
@@ -349,6 +351,24 @@ def resolve_by_grep(
 
     if not candidate_files:
         return None
+
+    # For dotted names (e.g. "Create.Command"), filter candidates to files
+    # that also define the parent type. This prevents "Command" matching in
+    # Delete.cs when we want "Create.Command" from Articles/Create.cs.
+    if parent_name and len(candidate_files) > 1:
+        parent_pattern = re.compile(
+            rf"(class|interface|type|struct|enum|record)\s+{re.escape(parent_name)}\b"
+        )
+        scoped = []
+        for f in candidate_files:
+            try:
+                content = f.read_text(errors="ignore")
+                if parent_pattern.search(content):
+                    scoped.append(f)
+            except OSError:
+                continue
+        if scoped:
+            candidate_files = scoped
 
     if len(candidate_files) == 1:
         return candidate_files[0]

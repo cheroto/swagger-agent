@@ -303,6 +303,41 @@ def prefilter_route_file(
     filtered_content = "\n\n".join(output_parts)
     filtered_chars = len(filtered_content)
 
+    # Safety: if filtering lost decorator/annotation lines from the file body,
+    # fall back to the full file. This catches cases where ctags misses methods
+    # (e.g. C# expression-bodied =>, Kotlin single-expression functions) but
+    # their decorators/attributes carry route information the LLM needs.
+    original_decorators = {
+        line.strip() for line in lines[preamble_end:]
+        if line.strip() and (
+            line.strip().startswith("@")
+            or (line.strip().startswith("[") and not line.strip().startswith("[//"))
+            or line.strip().startswith("#[")
+        )
+    }
+    if original_decorators:
+        filtered_lines_set = set(filtered_content.splitlines())
+        filtered_decorators = {
+            line.strip() for line in filtered_lines_set
+            if line.strip() and (
+                line.strip().startswith("@")
+                or (line.strip().startswith("[") and not line.strip().startswith("[//"))
+                or line.strip().startswith("#[")
+            )
+        }
+        lost_decorators = original_decorators - filtered_decorators
+        if lost_decorators:
+            return PrefilterResult(
+                content=file_content,
+                was_filtered=False,
+                original_chars=original_chars,
+                filtered_chars=original_chars,
+                matched_handlers=matched_names,
+                unmatched_handlers=unmatched,
+                reason=f"filtering lost {len(lost_decorators)} decorator/annotation lines "
+                       f"(ctags likely missed some methods)",
+            )
+
     # Check if we actually saved anything meaningful (at least 10%)
     if filtered_chars >= original_chars * 0.9:
         return PrefilterResult(

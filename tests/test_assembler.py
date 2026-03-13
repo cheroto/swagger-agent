@@ -252,6 +252,7 @@ class TestEmptyRefGuard:
                                 description="OK",
                                 schema_ref=RefHint(
                                     ref_hint="",
+                                    import_source="",
                                     resolution="unresolvable",
                                 ),
                             )
@@ -284,7 +285,7 @@ class TestAssembleSpecIntegration:
                         tags=["Articles"],
                         responses=[
                             Response(status_code="200", description="OK",
-                                     schema_ref=RefHint(ref_hint="Article", resolution="import"))
+                                     schema_ref=RefHint(ref_hint="Article", import_source="from app.models import Article", resolution="import"))
                         ],
                     ),
                 ],
@@ -299,7 +300,7 @@ class TestAssembleSpecIntegration:
                         tags=["Comments"],
                         responses=[
                             Response(status_code="200", description="OK",
-                                     schema_ref=RefHint(ref_hint="Comment", resolution="import"))
+                                     schema_ref=RefHint(ref_hint="Comment", import_source="from app.models import Comment", resolution="import"))
                         ],
                     ),
                 ],

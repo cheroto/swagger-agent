@@ -140,7 +140,7 @@ def run_route_extractor(
                 context.target_file, pf.unmatched_handlers,
             )
     else:
-        logger.warning(
+        logger.debug(
             "Ctags prefilter: no reduction for %s — reason: %s "
             "(handlers: %s, matched: %s, unmatched: %s)",
             context.target_file, pf.reason,

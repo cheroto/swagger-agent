@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 class RefHint(BaseModel):
     ref_hint: str
-    import_source: str | None = None
+    import_source: str
     resolution: Literal["import", "class_to_file", "unresolvable"]
 
 
@@ -88,7 +88,7 @@ class Parameter(BaseModel):
 
 class RequestBody(BaseModel):
     content_type: str = "application/json"
-    schema_ref: RefHint | None = None
+    schema_ref: RefHint
 
 
 class Response(BaseModel):
@@ -102,7 +102,7 @@ class Endpoint(BaseModel):
     path: str
     operation_id: str
     tags: list[str] = []
-    security: list[str] | None = None
+    security: list[str] = Field(default_factory=list)
     parameters: list[Parameter] = []
     request_body: RequestBody | None = None
     responses: list[Response] = []
