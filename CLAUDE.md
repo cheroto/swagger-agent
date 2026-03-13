@@ -363,3 +363,19 @@ No agent reads from the artifact store. No agent reads the state summary except 
 - Schema extraction is lazy — only extract models reachable from route `ref_hint`s. Never extract the full model tree.
 - Agents produce structured JSON. Infrastructure produces OpenAPI YAML. This boundary is absolute.
 - Working output is more important than perfect output. Emit what you can extract; use reasonable defaults for what you cannot. Never block on missing information.
+
+## Framework/Language/Tech Agnosticism — Absolute Rule
+
+**Every solution in this system MUST be framework-agnostic, language-agnostic, and tech-stack-agnostic.** This applies to all layers — agents, infrastructure, preprocessing, postprocessing, and any new modules.
+
+This system works on *arbitrary* codebases. Solutions that switch on framework name, hardcode language-specific patterns, or maintain per-framework lookup tables are **forbidden** unless the user explicitly asks for a heuristic or framework-specific solution.
+
+What this means in practice:
+
+- **No framework dispatch tables.** Do not write `if framework == "spring": ... elif framework == "express": ...`. If you need different behavior, it must emerge from the code's structure, not from a label.
+- **No language-specific parsing heuristics.** Do not write regex that targets Java annotations, Python decorators, or JS middleware chains. If you need to parse code structure, use universal tools (tree-sitter, ctags, AST-level analysis) that handle any language through grammars, not custom code.
+- **No per-framework prompt templates.** The LLM receives the code and figures out the framework. The prompt must work for any framework the LLM can recognize.
+- **Infrastructure preprocessing must be structural, not semantic.** If you strip code before sending it to an LLM, the stripping logic must operate on universal code structure (e.g., "remove function bodies" via AST, "keep only lines N-M") — never on framework-specific markers.
+- **The Scout identifies the framework for the LLM's benefit, not for infrastructure branching.** The framework name flows into prompts so the LLM knows what it's reading. Infrastructure code must never branch on it.
+
+When evaluating any proposed solution, ask: "Does this work on a codebase I've never seen, in a framework I've never heard of?" If not, redesign it.
