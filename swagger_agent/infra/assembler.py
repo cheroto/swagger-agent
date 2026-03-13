@@ -54,6 +54,11 @@ def _normalize_path(base_path: str, endpoint_path: str) -> str:
     if not full.startswith("/"):
         full = "/" + full
 
+    # Strip route constraints from inside braces BEFORE :param conversion.
+    # ASP.NET/Spring use {param:constraint} (e.g. {version:apiVersion}, {id:int}).
+    # OpenAPI only wants {param} — the constraint is dropped.
+    full = re.sub(r"\{(\w+):[^}]+\}", r"{\1}", full)
+
     # Convert framework-specific path param syntax to OpenAPI {param} style
     # :param (Express, Sinatra, Flask) and <param> (Flask, Django)
     full = re.sub(r":(\w+)", r"{\1}", full)
