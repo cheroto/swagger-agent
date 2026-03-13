@@ -21,6 +21,7 @@ from swagger_agent.agents.route_extractor.prompt import (
     CODE_ANALYSIS_PROMPT,
     build_phase2_prompt,
 )
+from swagger_agent.infra.ctags_filter import prefilter_route_file
 from swagger_agent.telemetry import LLMCall, Telemetry, measure_messages
 
 logger = logging.getLogger("swagger_agent.route_extractor")
@@ -121,13 +122,45 @@ def run_route_extractor(
             timestamp=p1_start,
         ))
 
-    # 4. Phase 2: Endpoint Extraction
+    # 4. Prefilter: use ctags to build a condensed file view for Phase 2
+    handler_names = [ep.handler_name for ep in analysis.endpoints]
+    pf = prefilter_route_file(target_file, file_content, handler_names)
+
+    if pf.was_filtered:
+        logger.info(
+            "Ctags prefilter: %s reduced from %d to %d chars (%.0f%% reduction, "
+            "matched %d/%d handlers)",
+            context.target_file, pf.original_chars, pf.filtered_chars,
+            (1 - pf.filtered_chars / pf.original_chars) * 100,
+            len(pf.matched_handlers), len(handler_names),
+        )
+        if pf.unmatched_handlers:
+            logger.warning(
+                "Ctags prefilter: unmatched handlers in %s: %s",
+                context.target_file, pf.unmatched_handlers,
+            )
+    else:
+        logger.warning(
+            "Ctags prefilter: no reduction for %s — reason: %s "
+            "(handlers: %s, matched: %s, unmatched: %s)",
+            context.target_file, pf.reason,
+            handler_names, pf.matched_handlers, pf.unmatched_handlers,
+        )
+
+    # Build Phase 2 user message with (possibly filtered) content
+    p2_user_message = (
+        f"## Context\n\n```json\n{context_json}\n```\n\n"
+        f"## Route File: {context.target_file}\n\n"
+        f"```\n{pf.content}\n```"
+    )
+
+    # 5. Phase 2: Endpoint Extraction
     phase2_prompt = build_phase2_prompt(analysis, context.base_path)
 
     logger.info("Phase 2: Extracting endpoints from %s", target_file)
     p2_messages = [
         {"role": "system", "content": phase2_prompt},
-        {"role": "user", "content": user_message},
+        {"role": "user", "content": p2_user_message},
     ]
     p2_input_chars = measure_messages(p2_messages)
     p2_start = time.monotonic()
@@ -157,7 +190,7 @@ def run_route_extractor(
             timestamp=p2_start,
         ))
 
-    # 5. Inject source_file (don't trust LLM to get the path right)
+    # 6. Inject source_file (don't trust LLM to get the path right)
     descriptor.source_file = context.target_file
 
     logger.info(
@@ -165,7 +198,7 @@ def run_route_extractor(
         len(descriptor.endpoints), target_file, phase2_duration_ms, total_duration_ms,
     )
 
-    # 6. Build run record
+    # 7. Build run record
     run_record = RouteExtractorRunRecord(
         target_file=context.target_file,
         context={
