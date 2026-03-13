@@ -29,6 +29,7 @@ from swagger_agent.infra.schema_loop import (
 )
 from swagger_agent.infra.assembler import AssemblyResult, assemble_spec
 from swagger_agent.infra.validator import ValidationResult, validate_spec, check_completeness
+from swagger_agent.telemetry import Telemetry
 
 
 @dataclass
@@ -42,6 +43,7 @@ class PipelineResult:
     validation: ValidationResult = field(default_factory=ValidationResult)
     failed_routes: list[tuple[str, str]] = field(default_factory=list)
     timings: dict[str, float] = field(default_factory=dict)
+    telemetry: Telemetry = field(default_factory=Telemetry)
 
 
 def run_pipeline(
@@ -98,6 +100,7 @@ def run_pipeline(
         str(target_path), config=config,
         event_handler=db if db else None,
         prescan=prescan_result,
+        telemetry=result.telemetry,
     )
     result.manifest = manifest
     result.timings["scout"] = (time.monotonic() - t0) * 1000
@@ -148,7 +151,7 @@ def run_pipeline(
             target_file=abs_path,
         )
         try:
-            descriptor, record = run_route_extractor(abs_path, ctx, config=config)
+            descriptor, record = run_route_extractor(abs_path, ctx, config=config, telemetry=result.telemetry)
             return (idx, route_file, descriptor, record, None)
         except Exception as e:
             return (idx, route_file, None, None, str(e))
@@ -234,6 +237,7 @@ def run_pipeline(
             config=config,
             console=console,
             event_callback=db.schema_event if db else None,
+            telemetry=result.telemetry,
         )
     else:
         if not db:

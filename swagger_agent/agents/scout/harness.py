@@ -31,6 +31,7 @@ from swagger_agent.models import (
 from swagger_agent.agents.scout.prompt import SCOUT_SYSTEM_PROMPT
 from swagger_agent.agents.scout.tools import build_scout_tools
 from swagger_agent.infra.prescan import PrescanResult, prescan_to_scratchpad
+from swagger_agent.telemetry import LLMCall, Telemetry, measure_messages
 
 logger = logging.getLogger("swagger_agent.scout")
 
@@ -390,6 +391,7 @@ def run_scout(
     config: LLMConfig | None = None,
     event_handler: ScoutEventHandler | None = None,
     prescan: PrescanResult | None = None,
+    telemetry: Telemetry | None = None,
 ) -> tuple[DiscoveryManifest, ScoutRunRecord]:
     """Run the Scout agent against a target directory.
 
@@ -443,6 +445,9 @@ def run_scout(
 
         messages = build_turn_messages(target_dir, trace, state, last_action_results)
 
+        llm_input_chars = measure_messages(messages)
+        llm_start = time.monotonic()
+
         turn_response = client.chat.completions.create(
             model=model,
             response_model=ScoutTurnResponse,
@@ -451,6 +456,20 @@ def run_scout(
             temperature=config.llm_temperature,
             max_tokens=config.llm_max_tokens,
         )
+
+        llm_duration_ms = (time.monotonic() - llm_start) * 1000
+        if telemetry:
+            output_json = turn_response.model_dump_json()
+            telemetry.record(LLMCall(
+                agent="scout",
+                phase=f"turn_{turn}",
+                model=model,
+                input_chars=llm_input_chars,
+                output_chars=len(output_json),
+                duration_ms=llm_duration_ms,
+                target_file=target_dir,
+                timestamp=llm_start,
+            ))
 
         # 1. Apply scratchpad (always present — enforced by Pydantic schema)
         state.scratchpad = turn_response.scratchpad
