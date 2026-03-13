@@ -246,18 +246,24 @@ def run_schema_loop(
                           count=record.schema_count,
                           duration_ms=record.duration_ms,
                           schema_names=list(descriptor.schemas.keys()))
-                    round_new_schemas.update(descriptor.schemas)
                     extracted_files.add(str(file_path))
 
-                    # Alias: if the requested name is dotted (e.g. "Create.Command")
-                    # and the extractor returned the leaf name (e.g. "Command"),
-                    # store the schema under the dotted name too so $ref resolution
-                    # finds it. This is structural — dotted names universally mean
-                    # nested/scoped types.
+                    # When a dotted name was requested (e.g. "Create.Command"),
+                    # store the matching leaf schema under the dotted name instead
+                    # of the bare name. This prevents name collisions when multiple
+                    # files define types with the same leaf name (e.g. Command).
+                    # Other schemas from the file keep their bare names.
                     if "." in schema_name:
                         leaf = schema_name.rsplit(".", 1)[1]
-                        if leaf in descriptor.schemas and schema_name not in round_new_schemas:
-                            round_new_schemas[schema_name] = descriptor.schemas[leaf]
+                        for extracted_name, extracted_schema in descriptor.schemas.items():
+                            if extracted_name == leaf:
+                                # Store under dotted name (the canonical ref_hint)
+                                round_new_schemas[schema_name] = extracted_schema
+                            else:
+                                # Other types from same file — keep bare name
+                                round_new_schemas[extracted_name] = extracted_schema
+                    else:
+                        round_new_schemas.update(descriptor.schemas)
 
         # Merge new schemas
         all_schemas.update(round_new_schemas)
