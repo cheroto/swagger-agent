@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import yaml
 
-from swagger_agent.models import DiscoveryManifest, EndpointDescriptor, Endpoint
+from swagger_agent.models import DiscoveryManifest, EndpointDescriptor, Endpoint, Parameter
 
 logger = logging.getLogger("swagger_agent.assembler")
 
@@ -107,11 +107,14 @@ def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
     This is agnostic — it compares the set of {names} in the path against
     the set of path parameter names in the endpoint, and fixes mismatches.
     """
-    if not ep.parameters:
-        return
-
     # Extract parameter names from the path template
     path_params = set(re.findall(r"\{(\w+)\}", path_key))
+
+    if not path_params:
+        return
+
+    if not ep.parameters:
+        ep.parameters = []
 
     # Collect current path parameter names from the endpoint
     ep_path_params = {
@@ -173,6 +176,22 @@ def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
             p for p in ep.parameters
             if not (p.in_ == "path" and p.name in extra_in_ep)
         ]
+
+    # Add missing path parameters — params in the path template that have
+    # no corresponding parameter object. These cause "path template expression
+    # not matched with Parameter Object" validation errors.
+    ep_path_params_final = {p.name for p in ep.parameters if p.in_ == "path"}
+    still_missing = path_params - ep_path_params_final
+    if still_missing:
+        for name in still_missing:
+            logger.info(
+                "Adding missing path parameter '%s' from path template: %s",
+                name, path_key,
+            )
+            ep.parameters.append(
+                Parameter(name=name, in_="path", required=True,
+                          schema_={"type": "string"})
+            )
 
 
 def _sanitize_path_template(path: str) -> str:
@@ -375,6 +394,74 @@ def _scrub_string_schemas(obj: object) -> object:
     return obj
 
 
+_JSON_SCHEMA_TYPES = frozenset({
+    "string", "integer", "number", "boolean", "array", "object",
+})
+
+
+def _coerce_to_schema(value: object) -> dict:
+    """Convert a non-dict value into a valid JSON Schema object.
+
+    Handles common LLM mistakes: bare type names, $ref strings, null, etc.
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        low = stripped.lower()
+        # Bare JSON Schema type name: "string" → {"type": "string"}
+        if low in _JSON_SCHEMA_TYPES:
+            return {"type": low}
+        # Bare $ref path
+        if stripped.startswith("#/components/schemas/"):
+            return {"$ref": stripped}
+        # JSON string that looks like an object or array
+        if (stripped.startswith("{") and stripped.endswith("}")) or \
+           (stripped.startswith("[") and stripped.endswith("]")):
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+        # PascalCase type name → assume $ref
+        if stripped and stripped[0].isupper() and stripped.isidentifier():
+            return {"$ref": f"#/components/schemas/{stripped}"}
+        # Fallback
+        return {"type": "string"}
+    if value is None:
+        return {"type": "string", "nullable": True}
+    if isinstance(value, bool):
+        return {"type": "boolean"}
+    if isinstance(value, (int, float)):
+        return {"type": "number"}
+    if isinstance(value, list):
+        return {"type": "array"}
+    return {"type": "object"}
+
+
+def _fix_non_schema_properties(obj: object) -> None:
+    """Ensure all values inside 'properties' dicts are valid schema objects.
+
+    LLMs sometimes produce bare strings as property values instead of schema
+    objects, causing 'properties members must be schemas' validation errors.
+    """
+    if isinstance(obj, dict):
+        if "properties" in obj and isinstance(obj["properties"], dict):
+            props = obj["properties"]
+            for key, val in list(props.items()):
+                if not isinstance(val, dict):
+                    coerced = _coerce_to_schema(val)
+                    logger.info(
+                        "Coerced non-schema property '%s' value %r → %s",
+                        key, val, coerced,
+                    )
+                    props[key] = coerced
+        for v in obj.values():
+            _fix_non_schema_properties(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _fix_non_schema_properties(item)
+
+
 def _strip_empty_required(obj: object) -> None:
     """Remove 'required': [] from schemas (OpenAPI 3.0 requires non-empty if present)."""
     if isinstance(obj, dict):
@@ -385,6 +472,76 @@ def _strip_empty_required(obj: object) -> None:
     elif isinstance(obj, list):
         for item in obj:
             _strip_empty_required(item)
+
+
+def _normalize_schema_case(spec: dict) -> None:
+    """Fix case mismatches between $ref targets and schema keys.
+
+    When an LLM extracts a schema under a different case than the ref_hint
+    used in endpoint descriptors, $refs break. This pass collects all $ref
+    targets, finds case-insensitive matches in the schema keys, and renames
+    the keys to match the $ref targets.
+    """
+    schemas = spec.get("components", {}).get("schemas", {})
+    if not schemas:
+        return
+
+    # Build case-insensitive lookup: lowercase → actual key
+    lower_map: dict[str, str] = {}
+    for key in schemas:
+        lower_map.setdefault(key.lower(), key)
+
+    # Collect all $ref targets from entire spec
+    ref_targets: set[str] = set()
+    prefix = "#/components/schemas/"
+
+    def _collect(obj: object) -> None:
+        if isinstance(obj, dict):
+            ref = obj.get("$ref")
+            if isinstance(ref, str) and ref.startswith(prefix):
+                ref_targets.add(ref[len(prefix):])
+            for v in obj.values():
+                _collect(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _collect(item)
+
+    _collect(spec.get("paths", {}))
+    _collect(schemas)
+
+    # Build rename map: old_key → new_key (matching $ref target)
+    renames: dict[str, str] = {}
+    for target in ref_targets:
+        if target not in schemas:
+            actual = lower_map.get(target.lower())
+            if actual and actual != target and actual not in renames:
+                renames[actual] = target
+
+    if not renames:
+        return
+
+    # Apply renames to schema keys
+    for old_key, new_key in renames.items():
+        logger.info("Renaming schema key '%s' → '%s' to match $ref target", old_key, new_key)
+        schemas[new_key] = schemas.pop(old_key)
+
+    # Update any $refs that pointed to old keys
+    old_to_new_ref = {
+        f"{prefix}{old}": f"{prefix}{new}"
+        for old, new in renames.items()
+    }
+
+    def _update_refs(obj: object) -> None:
+        if isinstance(obj, dict):
+            if "$ref" in obj and obj["$ref"] in old_to_new_ref:
+                obj["$ref"] = old_to_new_ref[obj["$ref"]]
+            for v in obj.values():
+                _update_refs(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _update_refs(item)
+
+    _update_refs(spec)
 
 
 def _deduplicate_operation_ids(spec: dict) -> None:
@@ -545,10 +702,71 @@ def _replace_ref_in_schema(schema: dict, target_name: str) -> None:
     _walk(schema)
 
 
+def _synthesize_polymorphism(spec: dict, inheritance_map: dict) -> None:
+    """Add oneOf to base schemas that have subtypes present in the spec.
+
+    When ctags reports that CreditCard and BankTransfer inherit from
+    PaymentMethod, and all three are in components/schemas, this adds
+    ``oneOf`` to PaymentMethod pointing to the subtypes. This tells
+    pentesting tools about the polymorphic response surface.
+    """
+    schemas = spec.get("components", {}).get("schemas", {})
+    if not schemas or not inheritance_map:
+        return
+
+    prefix = "#/components/schemas/"
+    for parent_name in list(schemas.keys()):
+        children = inheritance_map.get(parent_name, [])
+        if not children:
+            continue
+
+        # Only include subtypes that are actually in the spec
+        present_children = [c.name for c in children if c.name in schemas]
+        if not present_children:
+            continue
+
+        parent_schema = schemas[parent_name]
+
+        # Don't add oneOf if the schema already has one
+        if "oneOf" in parent_schema:
+            continue
+
+        parent_schema["oneOf"] = [
+            {"$ref": f"{prefix}{child}"} for child in sorted(present_children)
+        ]
+
+        # Try to detect a discriminator property: a property whose enum values
+        # correspond to the subtype names (case-insensitive).
+        props = parent_schema.get("properties", {})
+        child_names_lower = {c.lower() for c in present_children}
+        for prop_name, prop_schema in props.items():
+            if isinstance(prop_schema, dict) and "enum" in prop_schema:
+                enum_vals = prop_schema["enum"]
+                if isinstance(enum_vals, list):
+                    enum_lower = {str(v).lower() for v in enum_vals}
+                    # If enum values are a superset of child names, likely discriminator
+                    if child_names_lower <= enum_lower:
+                        parent_schema["discriminator"] = {
+                            "propertyName": prop_name,
+                        }
+                        logger.info(
+                            "Synthesized discriminator for %s: propertyName=%s",
+                            parent_name, prop_name,
+                        )
+                        break
+
+        logger.info(
+            "Synthesized oneOf for %s: %s",
+            parent_name, present_children,
+        )
+
+
 def assemble_spec(
     manifest: DiscoveryManifest,
     descriptors: list[EndpointDescriptor],
     schemas: dict[str, dict],
+    *,
+    inheritance_map: dict | None = None,
 ) -> AssemblyResult:
     """Assemble a full OpenAPI 3.0 spec from pipeline artifacts.
 
@@ -556,6 +774,7 @@ def assemble_spec(
         manifest: Scout discovery manifest.
         descriptors: Route extractor endpoint descriptors.
         schemas: Resolved schemas from the schema loop.
+        inheritance_map: Optional parent→children map from ctags inherits.
 
     Returns:
         AssemblyResult with the spec dict and YAML string.
@@ -621,7 +840,14 @@ def assemble_spec(
         while frontier:
             next_frontier: set[str] = set()
             for n in frontier:
-                schema = all_schemas.get(n, {})
+                # Try exact match first, then case-insensitive fallback
+                schema = all_schemas.get(n)
+                if schema is None:
+                    actual = schemas_lower.get(n.lower())
+                    if actual:
+                        schema = all_schemas.get(actual)
+                if schema is None:
+                    schema = {}
                 for ref in _extract_refs_from_schema(schema):
                     if ref and ref not in result:
                         result.add(ref)
@@ -629,23 +855,40 @@ def assemble_spec(
             frontier = next_frontier
         return result
 
+    # Build case-insensitive lookup for schema names (LLMs may change casing)
+    schemas_lower: dict[str, str] = {}
+    for key in schemas:
+        schemas_lower.setdefault(key.lower(), key)
+
     all_needed = _collect_transitive_refs(referenced_schemas, schemas)
 
     for name in all_needed:
         if name in schemas:
             spec["components"]["schemas"][name] = schemas[name]
         else:
-            spec["components"]["schemas"][name] = {
-                "type": "object",
-                "description": (
-                    "Schema could not be resolved from source code. "
-                    "Referenced by endpoint but not found in extracted schemas."
-                ),
-                "x-unresolved": True,
-            }
+            # Case-insensitive fallback: ref_hint says "ItemViewModel",
+            # LLM extracted as "itemviewmodel"
+            actual = schemas_lower.get(name.lower())
+            if actual:
+                logger.info(
+                    "Case-insensitive schema match: %s → %s", name, actual,
+                )
+                spec["components"]["schemas"][name] = schemas[actual]
+            else:
+                spec["components"]["schemas"][name] = {
+                    "type": "object",
+                    "description": (
+                        "Schema could not be resolved from source code. "
+                        "Referenced by endpoint but not found in extracted schemas."
+                    ),
+                    "x-unresolved": True,
+                }
 
     # Post-processing passes (order matters)
-    # 0. Fix string values that should be dicts (LLM sometimes outputs JSON strings)
+    # 0a. Fix non-dict property values (LLM sometimes outputs bare strings like "string")
+    if spec.get("components", {}).get("schemas"):
+        _fix_non_schema_properties(spec["components"]["schemas"])
+    # 0b. Fix string values that should be dicts (LLM sometimes outputs JSON strings)
     if spec.get("components", {}).get("schemas"):
         _scrub_string_schemas(spec["components"]["schemas"])
     # 1. Fix $ref + sibling keys (must come before cycle detection)
@@ -653,9 +896,14 @@ def assemble_spec(
         _fix_ref_siblings(spec["components"]["schemas"])
     # 2. Break circular $ref chains
     _break_ref_cycles(spec)
-    # 3. Deduplicate operationIds
+    # 3. Fix case mismatches between $ref targets and schema keys
+    _normalize_schema_case(spec)
+    # 4. Deduplicate operationIds
     _deduplicate_operation_ids(spec)
-    # 4. Strip empty "required" arrays (OpenAPI 3.0 violation)
+    # 5. Synthesize polymorphism (oneOf) from inheritance map
+    if inheritance_map:
+        _synthesize_polymorphism(spec, inheritance_map)
+    # 6. Strip empty "required" arrays (OpenAPI 3.0 violation)
     _strip_empty_required(spec)
 
     # Remove empty schemas

@@ -31,6 +31,7 @@ class CtagsEntry:
     line: int
     kind: str  # "class", "interface", "struct", "enum", etc.
     scope: str | None = None  # parent scope from ctags (e.g. "Create", "Conduit.Features.Articles.Create")
+    inherits: str | None = None  # comma-separated parent types (e.g. "BaseModel", "PaymentMethod,ISerializable")
 
 
 # Kinds that represent type definitions worth resolving
@@ -100,7 +101,7 @@ def build_ctags_index(project_root: Path) -> dict[str, list[CtagsEntry]]:
     ctags_bin = _find_ctags_binary()
 
     cmd = [
-        ctags_bin, "--output-format=json", "--fields=+n", "-R",
+        ctags_bin, "--output-format=json", "--fields=+ni", "-R",
     ]
     # Add custom kind definitions and regex patterns for framework-specific
     # model registrations (mongoose.model, sequelize.define, etc.)
@@ -145,9 +146,33 @@ def build_ctags_index(project_root: Path) -> dict[str, list[CtagsEntry]]:
         index[name].append(CtagsEntry(
             name=name, path=abs_path, line=line_no, kind=kind,
             scope=tag.get("scope"),
+            inherits=tag.get("inherits") or None,
         ))
 
     return dict(index)
+
+
+def build_inheritance_map(
+    ctags_index: dict[str, list[CtagsEntry]],
+) -> dict[str, list[CtagsEntry]]:
+    """Build a parent→children map from ctags inherits data.
+
+    Returns a dict mapping parent type names to the list of CtagsEntry
+    objects that inherit from them. Only types with the ``inherits`` field
+    set contribute to the map.
+
+    Example: if ctags reports ``CreditCard`` inherits ``PaymentMethod``, the
+    map will contain ``{"PaymentMethod": [CtagsEntry(name="CreditCard", ...)]}``.
+    """
+    parent_to_children: dict[str, list[CtagsEntry]] = defaultdict(list)
+    for _name, entries in ctags_index.items():
+        for entry in entries:
+            if entry.inherits:
+                for parent in entry.inherits.split(","):
+                    parent = parent.strip()
+                    if parent:
+                        parent_to_children[parent].append(entry)
+    return dict(parent_to_children)
 
 
 def _extract_path_fragment(import_source: str) -> str | None:

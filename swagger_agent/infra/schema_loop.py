@@ -28,9 +28,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from collections import deque
+
+logger = logging.getLogger("swagger_agent.schema_loop")
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -42,7 +45,9 @@ from rich.table import Table
 from swagger_agent.config import LLMConfig
 from swagger_agent.infra.assembler import _sanitize_ref_hint
 from swagger_agent.infra.resolve import (
+    CtagsEntry,
     build_ctags_index,
+    build_inheritance_map,
     resolve_type,
     scan_refs_in_schemas,
 )
@@ -109,7 +114,9 @@ def run_schema_loop(
             When provided, console output for key events is suppressed.
 
     Returns:
-        Dict of all collected schemas: {"SchemaName": {JSON Schema}, ...}
+        Tuple of (schemas dict, inheritance map).
+        schemas: {"SchemaName": {JSON Schema}, ...}
+        inheritance_map: {"ParentName": [CtagsEntry children], ...}
     """
     console = console or Console(stderr=True)
     config = config or LLMConfig()
@@ -124,6 +131,12 @@ def run_schema_loop(
     if not quiet:
         console.print(f"[dim]Indexed {type_count} type definitions[/dim]")
     _emit("ctags_built", count=type_count)
+
+    # Build inheritance map for subtype discovery
+    inheritance_map = build_inheritance_map(ctags_index)
+    if inheritance_map and not quiet:
+        total_children = sum(len(v) for v in inheritance_map.values())
+        console.print(f"[dim]Inheritance map: {len(inheritance_map)} base types, {total_children} subtypes[/dim]")
 
     all_schemas: dict[str, dict] = {}      # Accumulated schemas
     extracted_files: set[str] = set()       # Files already processed
@@ -265,11 +278,42 @@ def run_schema_loop(
                     else:
                         round_new_schemas.update(descriptor.schemas)
 
+                    # Case-insensitive alias: if the requested schema_name
+                    # doesn't match any key in the LLM output (common with
+                    # small LLMs that change casing), find the match and
+                    # alias under the canonical ref_hint name. This ensures
+                    # $refs built from ref_hints find their schemas.
+                    if schema_name not in round_new_schemas:
+                        lower_map = {
+                            k.lower(): k for k in round_new_schemas
+                        }
+                        actual = lower_map.get(schema_name.lower())
+                        if actual:
+                            logger.info(
+                                "Case alias: %s → %s (LLM used %s)",
+                                schema_name, actual, actual,
+                            )
+                            round_new_schemas[schema_name] = round_new_schemas[actual]
+
         # Merge new schemas
         all_schemas.update(round_new_schemas)
 
         # Scan for new $ref targets not yet resolved
         new_refs = scan_refs_in_schemas(round_new_schemas)
+
+        # Discover subtypes via ctags inheritance map
+        for schema_name in list(round_new_schemas.keys()):
+            children = inheritance_map.get(schema_name, [])
+            for child in children:
+                if child.name not in all_schemas and child.name not in new_refs:
+                    new_refs.add(child.name)
+                    if not quiet:
+                        console.print(
+                            f"  [magenta]Subtype discovered:[/magenta] "
+                            f"{child.name} inherits {schema_name}"
+                        )
+                    _emit("subtype_discovered", child=child.name, parent=schema_name)
+
         unresolved = new_refs - set(all_schemas.keys())
 
         if unresolved:
@@ -297,7 +341,7 @@ def run_schema_loop(
                     "x-unresolved": True,
                 }
 
-    return all_schemas
+    return all_schemas, inheritance_map
 
 
 def print_schema_summary(schemas: dict[str, dict], console: Console) -> None:
@@ -418,7 +462,7 @@ def main() -> None:
     console.print()
 
     # Run the loop
-    all_schemas = run_schema_loop(
+    all_schemas, _inheritance_map = run_schema_loop(
         ref_hints=ref_hints,
         framework=args.framework,
         project_root=project_root,

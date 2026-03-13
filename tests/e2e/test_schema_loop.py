@@ -345,7 +345,7 @@ def test_schema_loop(golden: SchemaLoopGolden, repos_root: str, llm_config: LLMC
     if not project_root.is_dir():
         pytest.skip(f"Repo not found: {project_root}")
 
-    schemas = run_schema_loop(
+    schemas, _inheritance_map = run_schema_loop(
         ref_hints=golden.ref_hints,
         framework=golden.framework,
         project_root=project_root,

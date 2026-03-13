@@ -258,13 +258,14 @@ def run_pipeline(
             seen.add(hint["ref_hint"])
             deduped_hints.append(hint)
 
+    inheritance_map: dict = {}
     if deduped_hints:
         if not db:
             console.print(
                 f"  {len(deduped_hints)} unique ref(s): "
                 f"{', '.join(h['ref_hint'] for h in deduped_hints)}"
             )
-        schemas = run_schema_loop(
+        schemas, inheritance_map = run_schema_loop(
             ref_hints=deduped_hints,
             framework=manifest.framework,
             project_root=target_path,
@@ -296,7 +297,7 @@ def run_pipeline(
         console.print(Rule(" Phase 4: Assembly ", style="bold blue"))
     t0 = time.monotonic()
 
-    assembly = assemble_spec(manifest, descriptors, schemas)
+    assembly = assemble_spec(manifest, descriptors, schemas, inheritance_map=inheritance_map)
     result.spec = assembly.spec
     result.yaml_str = assembly.yaml_str
     result.timings["assembly"] = (time.monotonic() - t0) * 1000

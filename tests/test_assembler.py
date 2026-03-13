@@ -4,12 +4,16 @@ from swagger_agent.infra.assembler import (
     AssemblyResult,
     _break_ref_cycles,
     _build_ref,
+    _coerce_to_schema,
     _deduplicate_operation_ids,
+    _fix_non_schema_properties,
     _fix_ref_siblings,
     _normalize_path,
+    _normalize_schema_case,
     _reconcile_path_params,
     _replace_outside_braces,
     _sanitize_path_template,
+    _synthesize_polymorphism,
     assemble_spec,
 )
 from swagger_agent.models import (
@@ -561,3 +565,415 @@ class TestAssembleSpecPathHandling:
         path_params = [p for p in params if p["in"] == "path"]
         assert len(path_params) == 1
         assert path_params[0]["name"] == "version"
+
+
+# --- Fix: Missing path parameters added ---
+
+
+class TestMissingPathParams:
+    def test_missing_params_added(self):
+        """Path has {id} but endpoint has no parameters → param added."""
+        ep = Endpoint(
+            method="GET",
+            path="/users/{id}",
+            operation_id="GetUser",
+        )
+        _reconcile_path_params("/users/{id}", ep)
+        assert len(ep.parameters) == 1
+        assert ep.parameters[0].name == "id"
+        assert ep.parameters[0].in_ == "path"
+        assert ep.parameters[0].required is True
+
+    def test_missing_params_added_alongside_query(self):
+        """Path has {id} but only query params exist → path param added."""
+        ep = Endpoint(
+            method="GET",
+            path="/users/{id}",
+            operation_id="GetUser",
+            parameters=[
+                Parameter(name="fields", in_="query"),
+            ],
+        )
+        _reconcile_path_params("/users/{id}", ep)
+        path_params = [p for p in ep.parameters if p.in_ == "path"]
+        assert len(path_params) == 1
+        assert path_params[0].name == "id"
+
+    def test_multiple_missing_params(self):
+        """Path has {orgId} and {userId} but no params → both added."""
+        ep = Endpoint(
+            method="GET",
+            path="/orgs/{orgId}/users/{userId}",
+            operation_id="GetOrgUser",
+        )
+        _reconcile_path_params("/orgs/{orgId}/users/{userId}", ep)
+        names = {p.name for p in ep.parameters if p.in_ == "path"}
+        assert names == {"orgId", "userId"}
+
+    def test_no_template_params_no_change(self):
+        """Path has no params → nothing added even with empty params list."""
+        ep = Endpoint(
+            method="GET",
+            path="/health",
+            operation_id="Health",
+        )
+        _reconcile_path_params("/health", ep)
+        assert not ep.parameters
+
+    def test_assembly_adds_missing_params(self):
+        """End-to-end: missing path params added during assembly."""
+        manifest = _make_manifest()
+        manifest.base_path = ""
+        descriptors = [
+            EndpointDescriptor(
+                source_file="ctrl.cs",
+                endpoints=[
+                    Endpoint(
+                        method="GET",
+                        path="/users/{id}/posts/{postId}",
+                        operation_id="GetPost",
+                        # No parameters at all!
+                    ),
+                ],
+            )
+        ]
+        result = assemble_spec(manifest, descriptors, {})
+        params = result.spec["paths"]["/users/{id}/posts/{postId}"]["get"]["parameters"]
+        path_params = {p["name"] for p in params if p["in"] == "path"}
+        assert path_params == {"id", "postId"}
+
+
+# --- Fix: Non-schema property values coerced ---
+
+
+class TestCoerceToSchema:
+    def test_bare_type_string(self):
+        assert _coerce_to_schema("string") == {"type": "string"}
+        assert _coerce_to_schema("integer") == {"type": "integer"}
+        assert _coerce_to_schema("Boolean") == {"type": "boolean"}
+
+    def test_ref_string(self):
+        result = _coerce_to_schema("#/components/schemas/Foo")
+        assert result == {"$ref": "#/components/schemas/Foo"}
+
+    def test_pascal_case_type_name(self):
+        result = _coerce_to_schema("UserProfile")
+        assert result == {"$ref": "#/components/schemas/UserProfile"}
+
+    def test_json_string(self):
+        result = _coerce_to_schema('{"type": "string", "format": "email"}')
+        assert result == {"type": "string", "format": "email"}
+
+    def test_none(self):
+        result = _coerce_to_schema(None)
+        assert result == {"type": "string", "nullable": True}
+
+    def test_number(self):
+        result = _coerce_to_schema(42)
+        assert result == {"type": "number"}
+
+    def test_bool(self):
+        result = _coerce_to_schema(True)
+        assert result == {"type": "boolean"}
+
+
+class TestFixNonSchemaProperties:
+    def test_bare_string_property_fixed(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": "string",
+                "age": "integer",
+                "valid": {"type": "boolean"},
+            },
+        }
+        _fix_non_schema_properties(schema)
+        assert schema["properties"]["name"] == {"type": "string"}
+        assert schema["properties"]["age"] == {"type": "integer"}
+        assert schema["properties"]["valid"] == {"type": "boolean"}
+
+    def test_nested_properties_fixed(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "inner": {
+                    "type": "object",
+                    "properties": {
+                        "bad": "number",
+                    },
+                },
+            },
+        }
+        _fix_non_schema_properties(schema)
+        assert schema["properties"]["inner"]["properties"]["bad"] == {"type": "number"}
+
+    def test_assembly_fixes_bad_properties(self):
+        """End-to-end: bare string properties fixed during assembly."""
+        manifest = _make_manifest()
+        descriptors = [
+            EndpointDescriptor(
+                source_file="routes.py",
+                endpoints=[
+                    Endpoint(
+                        method="GET",
+                        path="/test",
+                        operation_id="GetTest",
+                        responses=[
+                            Response(status_code="200", description="OK",
+                                     schema_ref=RefHint(ref_hint="Bad", import_line="", file_namespace="", resolution="import"))
+                        ],
+                    ),
+                ],
+            )
+        ]
+        schemas = {
+            "Bad": {
+                "type": "object",
+                "properties": {
+                    "name": "string",
+                    "ref": "UserProfile",
+                },
+            },
+        }
+        result = assemble_spec(manifest, descriptors, schemas)
+        bad_schema = result.spec["components"]["schemas"]["Bad"]
+        assert bad_schema["properties"]["name"] == {"type": "string"}
+        assert bad_schema["properties"]["ref"] == {"$ref": "#/components/schemas/UserProfile"}
+
+
+# --- Fix: Case normalization ---
+
+
+class TestNormalizeSchemaCase:
+    def test_case_mismatch_fixed(self):
+        spec = {
+            "paths": {
+                "/test": {
+                    "get": {
+                        "operationId": "GetTest",
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "#/components/schemas/AffiliateModelViewModel"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "affiliatemodelviewmodel": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                    }
+                }
+            },
+        }
+        _normalize_schema_case(spec)
+        # Schema key should now match the $ref target
+        assert "AffiliateModelViewModel" in spec["components"]["schemas"]
+        assert "affiliatemodelviewmodel" not in spec["components"]["schemas"]
+
+    def test_internal_refs_updated(self):
+        spec = {
+            "paths": {
+                "/test": {
+                    "get": {
+                        "operationId": "GetTest",
+                        "responses": {
+                            "200": {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "#/components/schemas/Parent"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "parent": {
+                        "type": "object",
+                        "properties": {
+                            "child": {"$ref": "#/components/schemas/child"},
+                        },
+                    },
+                    "child": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                    },
+                }
+            },
+        }
+        _normalize_schema_case(spec)
+        assert "Parent" in spec["components"]["schemas"]
+        # Internal $ref to "child" should be unchanged (it matches the key)
+        parent = spec["components"]["schemas"]["Parent"]
+        assert parent["properties"]["child"]["$ref"] == "#/components/schemas/child"
+
+    def test_no_mismatch_unchanged(self):
+        spec = {
+            "paths": {},
+            "components": {
+                "schemas": {
+                    "User": {"type": "object"},
+                }
+            },
+        }
+        _normalize_schema_case(spec)
+        assert "User" in spec["components"]["schemas"]
+
+    def test_assembly_case_normalization(self):
+        """End-to-end: case-mismatched schemas found during assembly."""
+        manifest = _make_manifest()
+        descriptors = [
+            EndpointDescriptor(
+                source_file="routes.cs",
+                endpoints=[
+                    Endpoint(
+                        method="GET",
+                        path="/items",
+                        operation_id="GetItems",
+                        responses=[
+                            Response(status_code="200", description="OK",
+                                     schema_ref=RefHint(ref_hint="ItemViewModel", import_line="", file_namespace="", resolution="import"))
+                        ],
+                    ),
+                ],
+            )
+        ]
+        # Schema stored under wrong case (as LLM might produce)
+        schemas = {
+            "itemviewmodel": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+            },
+        }
+        result = assemble_spec(manifest, descriptors, schemas)
+        # Should be found and stored under the $ref-matching name
+        assert "ItemViewModel" in result.spec["components"]["schemas"]
+        assert not result.spec["components"]["schemas"]["ItemViewModel"].get("x-unresolved")
+
+
+# --- Feature: Polymorphism synthesis ---
+
+
+class TestSynthesizePolymorphism:
+    def test_oneof_added_for_subtypes(self):
+        from swagger_agent.infra.resolve import CtagsEntry
+        from pathlib import Path
+
+        spec = {
+            "components": {
+                "schemas": {
+                    "PaymentMethod": {
+                        "type": "object",
+                        "properties": {"type": {"type": "string"}},
+                    },
+                    "CreditCard": {
+                        "type": "object",
+                        "allOf": [{"$ref": "#/components/schemas/PaymentMethod"}],
+                    },
+                    "BankTransfer": {
+                        "type": "object",
+                        "allOf": [{"$ref": "#/components/schemas/PaymentMethod"}],
+                    },
+                }
+            }
+        }
+        inheritance_map = {
+            "PaymentMethod": [
+                CtagsEntry(name="CreditCard", path=Path("a.cs"), line=1, kind="record"),
+                CtagsEntry(name="BankTransfer", path=Path("b.cs"), line=1, kind="record"),
+            ],
+        }
+        _synthesize_polymorphism(spec, inheritance_map)
+        pm = spec["components"]["schemas"]["PaymentMethod"]
+        assert "oneOf" in pm
+        refs = [item["$ref"] for item in pm["oneOf"]]
+        assert "#/components/schemas/BankTransfer" in refs
+        assert "#/components/schemas/CreditCard" in refs
+
+    def test_discriminator_detected_from_enum(self):
+        from swagger_agent.infra.resolve import CtagsEntry
+        from pathlib import Path
+
+        spec = {
+            "components": {
+                "schemas": {
+                    "PaymentMethod": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": ["CreditCard", "BankTransfer", "Crypto"],
+                            },
+                        },
+                    },
+                    "CreditCard": {"type": "object"},
+                    "BankTransfer": {"type": "object"},
+                }
+            }
+        }
+        inheritance_map = {
+            "PaymentMethod": [
+                CtagsEntry(name="CreditCard", path=Path("a.cs"), line=1, kind="record"),
+                CtagsEntry(name="BankTransfer", path=Path("b.cs"), line=1, kind="record"),
+            ],
+        }
+        _synthesize_polymorphism(spec, inheritance_map)
+        pm = spec["components"]["schemas"]["PaymentMethod"]
+        assert "discriminator" in pm
+        assert pm["discriminator"]["propertyName"] == "kind"
+
+    def test_no_oneof_when_subtypes_missing_from_spec(self):
+        from swagger_agent.infra.resolve import CtagsEntry
+        from pathlib import Path
+
+        spec = {
+            "components": {
+                "schemas": {
+                    "PaymentMethod": {
+                        "type": "object",
+                    },
+                }
+            }
+        }
+        inheritance_map = {
+            "PaymentMethod": [
+                CtagsEntry(name="CreditCard", path=Path("a.cs"), line=1, kind="record"),
+            ],
+        }
+        _synthesize_polymorphism(spec, inheritance_map)
+        assert "oneOf" not in spec["components"]["schemas"]["PaymentMethod"]
+
+    def test_existing_oneof_not_overwritten(self):
+        from swagger_agent.infra.resolve import CtagsEntry
+        from pathlib import Path
+
+        spec = {
+            "components": {
+                "schemas": {
+                    "PaymentMethod": {
+                        "type": "object",
+                        "oneOf": [{"$ref": "#/components/schemas/Manual"}],
+                    },
+                    "CreditCard": {"type": "object"},
+                }
+            }
+        }
+        inheritance_map = {
+            "PaymentMethod": [
+                CtagsEntry(name="CreditCard", path=Path("a.cs"), line=1, kind="record"),
+            ],
+        }
+        _synthesize_polymorphism(spec, inheritance_map)
+        # Should keep the existing oneOf
+        pm = spec["components"]["schemas"]["PaymentMethod"]
+        assert len(pm["oneOf"]) == 1
+        assert pm["oneOf"][0]["$ref"] == "#/components/schemas/Manual"
