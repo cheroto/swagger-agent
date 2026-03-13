@@ -21,9 +21,7 @@ You receive:
 
 ## Output Format
 
-Return a SchemaDescriptor containing `schemas`: a dict mapping schema names to their JSON Schema definitions.
-
-Each schema is a standard JSON Schema object:
+The output schema is provided via the tool definition. Each schema value must be a standard JSON Schema object:
 
 ```json
 {
@@ -165,6 +163,7 @@ Extract validation rules from framework-specific annotations/decorators into JSO
 - **Mongoose:** Fields with `required: true` are required
 
 Collect all required field names into a `"required": [...]` array on the schema object.
+If no fields are required, **omit the `required` key entirely** — do NOT emit `"required": []`.
 
 ## Nullable Fields
 

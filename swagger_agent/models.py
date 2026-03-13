@@ -118,7 +118,7 @@ class EndpointDescriptor(BaseModel):
 
 class SchemaDescriptor(BaseModel):
     source_file: str
-    schemas: dict[str, dict]
+    schemas: dict[str, dict] = Field(description="Map of schema name to JSON Schema object. Each value must have 'type', 'properties', and optionally 'required' (non-empty array of field names).")
 
 
 # --- State Models ---
