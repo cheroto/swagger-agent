@@ -19,6 +19,7 @@ from swagger_agent.models import (
 )
 from swagger_agent.agents.scout.harness import run_scout
 from swagger_agent.infra.prescan import run_prescan
+from swagger_agent.infra.detectors.result import PrescanResult
 from swagger_agent.agents.route_extractor.harness import (
     RouteExtractorContext,
     run_route_extractor,
@@ -44,11 +45,23 @@ class PipelineResult:
     timings: dict[str, float] = field(default_factory=dict)
 
 
+def _prescan_to_manifest(prescan: PrescanResult, target_dir: str) -> DiscoveryManifest:
+    """Convert a PrescanResult directly into a DiscoveryManifest (no LLM)."""
+    return DiscoveryManifest(
+        framework=prescan.framework or "unknown",
+        language=prescan.language or "unknown",
+        route_files=prescan.route_files,
+        servers=prescan.servers,
+        base_path=prescan.base_path,
+    )
+
+
 def run_pipeline(
     target_dir: str,
     config: LLMConfig | None = None,
     console: Console | None = None,
     dashboard: object | None = None,
+    skip_scout: bool = False,
 ) -> PipelineResult:
     """Run the full pipeline: Scout → Route Extraction → Schema Loop → Assembly.
 
@@ -87,30 +100,51 @@ def run_pipeline(
     else:
         console.print(f"[bold]Pre-scan:[/bold] {prescan_summary}")
 
-    # ── Phase 1: Scout ──
-    if db:
-        db.phase_start(1, "Scout")
-    else:
-        console.print(Rule(" Phase 1: Scout ", style="bold blue"))
-    t0 = time.monotonic()
+    # ── Phase 1: Scout (or skip with prescan) ──
+    if skip_scout:
+        phase1_label = "Scout [bold yellow](skipped — using prescan)[/bold yellow]"
+        if db:
+            db.phase_start(1, "Scout (skipped)")
+        else:
+            console.print(Rule(" Phase 1: Scout (skipped — prescan only) ", style="bold yellow"))
 
-    manifest, scout_record = run_scout(
-        str(target_path), config=config,
-        event_handler=db if db else None,
-        prescan=prescan_result,
-    )
-    result.manifest = manifest
-    result.timings["scout"] = (time.monotonic() - t0) * 1000
+        manifest = _prescan_to_manifest(prescan_result, str(target_path))
+        result.manifest = manifest
+        result.timings["scout"] = 0.0
 
-    scout_summary = (
-        f"{manifest.framework}/{manifest.language}, "
-        f"{len(manifest.route_files)} route(s), "
-        f"{len(manifest.servers)} server(s)"
-    )
-    if db:
-        db.phase_complete(1, scout_summary)
+        scout_summary = (
+            f"{manifest.framework}/{manifest.language}, "
+            f"{len(manifest.route_files)} route(s), "
+            f"{len(manifest.servers)} server(s) [prescan-only]"
+        )
+        if db:
+            db.phase_complete(1, scout_summary)
+        else:
+            console.print(f"[bold]Prescan manifest:[/bold] {scout_summary}")
     else:
-        console.print(f"[bold]Scout complete:[/bold] {scout_summary}")
+        if db:
+            db.phase_start(1, "Scout")
+        else:
+            console.print(Rule(" Phase 1: Scout ", style="bold blue"))
+        t0 = time.monotonic()
+
+        manifest, scout_record = run_scout(
+            str(target_path), config=config,
+            event_handler=db if db else None,
+            prescan=prescan_result,
+        )
+        result.manifest = manifest
+        result.timings["scout"] = (time.monotonic() - t0) * 1000
+
+        scout_summary = (
+            f"{manifest.framework}/{manifest.language}, "
+            f"{len(manifest.route_files)} route(s), "
+            f"{len(manifest.servers)} server(s)"
+        )
+        if db:
+            db.phase_complete(1, scout_summary)
+        else:
+            console.print(f"[bold]Scout complete:[/bold] {scout_summary}")
 
     if not manifest.route_files:
         if not db:

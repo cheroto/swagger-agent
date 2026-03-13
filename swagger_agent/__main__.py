@@ -94,6 +94,10 @@ def main() -> None:
     parser.add_argument("--dump-json", metavar="PATH", help="Save full pipeline result as JSON")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("--no-dashboard", action="store_true", help="Disable live dashboard")
+    parser.add_argument(
+        "--skip-scout", action="store_true",
+        help="[experimental] Skip Scout LLM and use deterministic prescan as the discovery manifest",
+    )
     args = parser.parse_args()
 
     # Validate target
@@ -120,6 +124,7 @@ def main() -> None:
     try:
         result = run_pipeline(
             args.target_dir, config=config, console=console, dashboard=dashboard,
+            skip_scout=args.skip_scout,
         )
     except BaseException:
         if dashboard:
