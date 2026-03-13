@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from collections import defaultdict
@@ -99,6 +100,10 @@ def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
     renames any path parameter objects whose name matches a constraint
     that was stripped, so path template and parameter objects stay consistent.
 
+    Also removes orphaned path parameters (params declared as "in: path"
+    but whose name doesn't appear in the path template and can't be
+    reconciled).
+
     This is agnostic — it compares the set of {names} in the path against
     the set of path parameter names in the endpoint, and fixes mismatches.
     """
@@ -107,8 +112,6 @@ def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
 
     # Extract parameter names from the path template
     path_params = set(re.findall(r"\{(\w+)\}", path_key))
-    if not path_params:
-        return
 
     # Collect current path parameter names from the endpoint
     ep_path_params = {
@@ -119,42 +122,57 @@ def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
     extra_in_ep = ep_path_params - path_params
     missing_in_ep = path_params - ep_path_params
 
-    if not extra_in_ep or not missing_in_ep:
-        return  # No mismatch, or can't fix (different count)
+    if extra_in_ep and missing_in_ep:
+        # Try to match extras to missing by position in the path.
+        if len(extra_in_ep) == 1 and len(missing_in_ep) == 1:
+            old_name = extra_in_ep.pop()
+            new_name = missing_in_ep.pop()
+            for p in ep.parameters:
+                if p.in_ == "path" and p.name == old_name:
+                    logger.info(
+                        "Reconciling path parameter: %s → %s (path template: %s)",
+                        old_name, new_name, path_key,
+                    )
+                    p.name = new_name
+                    break
+        else:
+            # Multiple mismatches: match by segment position in the path.
+            norm_params = re.findall(r"\{(\w+)\}", path_key)
+            missing_ordered = [p for p in norm_params if p in missing_in_ep]
+            ep_extra_ordered = [
+                p.name for p in ep.parameters
+                if p.in_ == "path" and p.name in extra_in_ep
+            ]
 
-    # Try to match extras to missing by position in the path.
-    # For simple cases (1:1 mismatch), rename directly.
-    # For complex cases, use path segment position to match.
-    if len(extra_in_ep) == 1 and len(missing_in_ep) == 1:
-        old_name = extra_in_ep.pop()
-        new_name = missing_in_ep.pop()
-        for p in ep.parameters:
-            if p.in_ == "path" and p.name == old_name:
-                logger.info(
-                    "Reconciling path parameter: %s → %s (path template: %s)",
-                    old_name, new_name, path_key,
-                )
-                p.name = new_name
-                break
-        return
+            # Pair up as many as possible by position
+            pairs = min(len(missing_ordered), len(ep_extra_ordered))
+            if pairs > 0:
+                rename_map = dict(zip(ep_extra_ordered[:pairs], missing_ordered[:pairs]))
+                for p in ep.parameters:
+                    if p.in_ == "path" and p.name in rename_map:
+                        logger.info(
+                            "Reconciling path parameter: %s → %s (path template: %s)",
+                            p.name, rename_map[p.name], path_key,
+                        )
+                        p.name = rename_map[p.name]
 
-    # Multiple mismatches: match by segment position in the path.
-    # Extract {param} positions from the normalized path and original path,
-    # then pair up extras/missing by their order of appearance.
-    norm_params = re.findall(r"\{(\w+)\}", path_key)
-    extra_ordered = [p for p in norm_params if p in missing_in_ep]
-    # Order the extra EP params by their position in the EP's parameter list
-    ep_extra_ordered = [p.name for p in ep.parameters if p.in_ == "path" and p.name in extra_in_ep]
+        # Recalculate after reconciliation
+        ep_path_params = {p.name for p in ep.parameters if p.in_ == "path"}
+        extra_in_ep = ep_path_params - path_params
 
-    if len(extra_ordered) == len(ep_extra_ordered):
-        rename_map = dict(zip(ep_extra_ordered, extra_ordered))
-        for p in ep.parameters:
-            if p.in_ == "path" and p.name in rename_map:
-                logger.info(
-                    "Reconciling path parameter: %s → %s (path template: %s)",
-                    p.name, rename_map[p.name], path_key,
-                )
-                p.name = rename_map[p.name]
+    # Remove orphaned path parameters — params declared as "in: path" but
+    # not present in the path template after reconciliation. These cause
+    # OpenAPI validation errors ("parameter not found in path template").
+    if extra_in_ep:
+        for orphan in extra_in_ep:
+            logger.info(
+                "Removing orphaned path parameter '%s' not in path template: %s",
+                orphan, path_key,
+            )
+        ep.parameters = [
+            p for p in ep.parameters
+            if not (p.in_ == "path" and p.name in extra_in_ep)
+        ]
 
 
 def _sanitize_path_template(path: str) -> str:
@@ -314,6 +332,47 @@ def _build_operation(ep: Endpoint) -> dict:
         op["security"] = [{scheme: []} for scheme in ep.security]
 
     return op
+
+
+def _scrub_string_schemas(obj: object) -> object:
+    """Recursively fix string values that should be dicts (JSON objects).
+
+    LLMs sometimes produce schema property values as JSON strings instead of
+    actual dicts, e.g. '{"$ref": "#/components/schemas/Foo"}' instead of
+    {"$ref": "..."}. This causes "Properties members must be schemas" errors.
+
+    Also handles bare $ref strings used as property values (not as $ref targets),
+    e.g. a property value of '#/components/schemas/Foo' gets converted to
+    {"$ref": "..."}.
+    """
+    if isinstance(obj, dict):
+        for k, v in list(obj.items()):
+            if isinstance(v, str):
+                # Skip keys that legitimately have string values
+                # ($ref targets, type, format, description, etc.)
+                if k in ("$ref", "type", "format", "description", "pattern",
+                         "title", "default", "example", "x-circular-ref"):
+                    continue
+                # Try to parse JSON strings that look like objects or arrays
+                stripped = v.strip()
+                if (stripped.startswith("{") and stripped.endswith("}")) or \
+                   (stripped.startswith("[") and stripped.endswith("]")):
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, (dict, list)):
+                            obj[k] = _scrub_string_schemas(parsed)
+                            continue
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                # Bare $ref string as a property value (not a $ref key)
+                elif stripped.startswith("#/components/schemas/"):
+                    obj[k] = {"$ref": stripped}
+                    continue
+            obj[k] = _scrub_string_schemas(v)
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            obj[i] = _scrub_string_schemas(item)
+    return obj
 
 
 def _strip_empty_required(obj: object) -> None:
@@ -586,6 +645,9 @@ def assemble_spec(
             }
 
     # Post-processing passes (order matters)
+    # 0. Fix string values that should be dicts (LLM sometimes outputs JSON strings)
+    if spec.get("components", {}).get("schemas"):
+        _scrub_string_schemas(spec["components"]["schemas"])
     # 1. Fix $ref + sibling keys (must come before cycle detection)
     if spec.get("components", {}).get("schemas"):
         _fix_ref_siblings(spec["components"]["schemas"])
