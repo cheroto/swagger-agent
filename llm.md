@@ -40,9 +40,9 @@ All configuration via `.env` file. Every value has a sensible default.
 # .env
 
 # --- Primary LLM endpoint ---
-LLM_BASE_URL=http://server-pedro.local:8080/v1
-LLM_MODEL=qwen35-35b-a3b-instruct
-LLM_API_KEY=not-needed                    # llama-swap doesn't require a key, but openai SDK requires a non-empty string
+LLM_BASE_URL=http://localhost:8080/v1
+LLM_MODEL=your-model-name
+LLM_API_KEY=not-needed                    # local servers don't require a key, but openai SDK requires a non-empty string
 
 # --- Per-agent model overrides (optional) ---
 # Use these to assign different models to different agents.
@@ -70,7 +70,7 @@ INSTRUCTOR_MAX_RETRIES=3                  # Retries on schema validation failure
 # --- Optional: switch to cloud provider ---
 # Uncomment to use OpenRouter, Together, Groq, or any OpenAI-compatible API:
 # LLM_BASE_URL=https://openrouter.ai/api/v1
-# LLM_MODEL=qwen/qwen3.5-35b-a3b
+# LLM_MODEL=your-model-name
 # LLM_API_KEY=sk-or-...
 ```
 
@@ -83,8 +83,8 @@ class LLMConfig(BaseSettings):
     model_config = {"env_prefix": "", "env_file": ".env"}
 
     # Defaults
-    llm_base_url: str = "http://server-pedro.local:8080/v1"
-    llm_model: str = "qwen35-35b-a3b-instruct"
+    llm_base_url: str = "http://localhost:8080/v1"
+    llm_model: str = "default"
     llm_api_key: str = "not-needed"
     llm_temperature: float = 0.2
     llm_max_tokens: int = 16384
@@ -288,39 +288,39 @@ class Tool:
 
 No framework needed. The tool schemas are passed to the OpenAI API, and tool execution is a dict lookup + function call.
 
-## Qwen 3.5 Considerations
+## Small Model Considerations
 
-Things to account for when using Qwen 3.5 35B-A3B with this stack:
+Things to account for when using smaller models (e.g. Qwen 3.5, Llama, etc.):
 
-- **Thinking mode**: Qwen 3.5 has a thinking/reasoning mode that produces `<think>` tags. For structured extraction, set `extra_body={"chat_template": "WITHOUT_THINK"}` or strip thinking tags from output. Instructor should handle this if the final output validates, but test this.
-- **Tool calling format**: Qwen 3.5 supports OpenAI-compatible tool calling. Verify via llama-swap that the chat template is set correctly for function calling.
-- **Context window**: 32k input. Route files and model files should fit easily. For the Scout, the re-injected state + conversation history needs monitoring — the step limit prevents blowout.
+- **Thinking mode**: Some models have a thinking/reasoning mode that produces `<think>` tags. For structured extraction, disable thinking mode or strip thinking tags from output. Instructor should handle this if the final output validates.
+- **Tool calling format**: Verify your serving backend has the chat template set correctly for function calling.
+- **Context window**: Route files and model files should fit easily in 32k context. For the Scout, the re-injected state needs monitoring — the step limit prevents blowout.
 - **JSON adherence**: Smaller models sometimes produce malformed JSON. Instructor's `max_retries` handles this — 3 retries is usually sufficient. If a specific agent consistently fails, increase retries or simplify the response model for that agent.
 - **Temperature**: 0.2 for extraction (low creativity, high faithfulness to source code). 0.0 for orchestrator decisions.
 
 ## Switching Providers
 
-To switch from llama-swap to a cloud provider, only `.env` changes:
+To switch to a cloud provider, only `.env` changes:
 
 ```bash
 # OpenRouter
 LLM_BASE_URL=https://openrouter.ai/api/v1
-LLM_MODEL=qwen/qwen3.5-35b-a3b
+LLM_MODEL=your-model-name
 LLM_API_KEY=sk-or-...
 
 # Together
 LLM_BASE_URL=https://api.together.xyz/v1
-LLM_MODEL=Qwen/Qwen3.5-35B-A3B-Instruct
+LLM_MODEL=your-model-name
 LLM_API_KEY=...
 
 # Groq
 LLM_BASE_URL=https://api.groq.com/openai/v1
-LLM_MODEL=qwen-qwq-32b
+LLM_MODEL=your-model-name
 LLM_API_KEY=gsk_...
 
 # Local Ollama
 LLM_BASE_URL=http://localhost:11434/v1
-LLM_MODEL=qwen3.5:35b-a3b
+LLM_MODEL=your-model-name
 LLM_API_KEY=ollama
 ```
 

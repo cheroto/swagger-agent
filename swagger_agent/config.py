@@ -19,8 +19,8 @@ class LLMConfig(BaseSettings):
     model_config = {"env_prefix": "", "env_file": ".env"}
 
     # Defaults
-    llm_base_url: str = "http://server-pedro.local:8080/v1"
-    llm_model: str = "qwen35-35b-a3b-instruct"
+    llm_base_url: str = "http://localhost:8080/v1"
+    llm_model: str = "default"
     llm_api_key: str = "not-needed"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 16384
