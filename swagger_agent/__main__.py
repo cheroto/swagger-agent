@@ -14,6 +14,7 @@ from rich.table import Table
 
 from swagger_agent.config import LLMConfig
 from swagger_agent.pipeline import run_pipeline
+from swagger_agent.telemetry import Telemetry
 
 
 def _resolve_output_dir(target_dir: str) -> Path:
@@ -35,6 +36,58 @@ def _resolve_output_dir(target_dir: str) -> Path:
         if not candidate.exists():
             return candidate
         n += 1
+
+
+def _fmt_chars(n: int) -> str:
+    """Format character count as human-readable size."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
+def _print_telemetry(telemetry: Telemetry, console: Console) -> None:
+    """Print LLM call telemetry as a summary table."""
+    calls = telemetry.calls
+    if not calls:
+        return
+
+    table = Table(title="LLM Calls", expand=True)
+    table.add_column("#", width=3, justify="right", style="dim")
+    table.add_column("Agent", min_width=10)
+    table.add_column("Phase", min_width=12)
+    table.add_column("Target", min_width=20)
+    table.add_column("Input", width=8, justify="right")
+    table.add_column("Output", width=8, justify="right")
+    table.add_column("Time", width=8, justify="right")
+
+    for i, c in enumerate(calls, 1):
+        # Shorten target_file to basename
+        target = os.path.basename(c.target_file) if c.target_file else ""
+        table.add_row(
+            str(i),
+            c.agent,
+            c.phase,
+            target,
+            _fmt_chars(c.input_chars),
+            _fmt_chars(c.output_chars),
+            f"{c.duration_ms / 1000:.1f}s",
+        )
+
+    # Totals row
+    total_input = sum(c.input_chars for c in calls)
+    total_output = sum(c.output_chars for c in calls)
+    total_time = sum(c.duration_ms for c in calls)
+    table.add_row(
+        "", "[bold]TOTAL[/bold]", f"[bold]{len(calls)} calls[/bold]", "",
+        f"[bold]{_fmt_chars(total_input)}[/bold]",
+        f"[bold]{_fmt_chars(total_output)}[/bold]",
+        f"[bold]{total_time / 1000:.1f}s[/bold]",
+    )
+
+    console.print(table)
+    console.print()
 
 
 def _print_completeness(completeness, console: Console) -> None:
@@ -143,6 +196,9 @@ def main() -> None:
         _print_completeness(result.completeness, console)
         console.print()
 
+    # Print LLM telemetry summary
+    _print_telemetry(result.telemetry, console)
+
     # Print timings
     if args.verbose:
         console.print("[bold]Timings:[/bold]")
@@ -194,6 +250,7 @@ def main() -> None:
             "validation": asdict(result.validation),
             "failed_routes": result.failed_routes,
             "timings": result.timings,
+            "telemetry": result.telemetry.summary(),
         }
         with open(json_path, "w") as f:
             json.dump(dump, f, indent=2, default=str)

@@ -51,6 +51,7 @@ from swagger_agent.agents.schema_extractor.harness import (
     SchemaExtractorContext,
 )
 from swagger_agent.models import EndpointDescriptor, SchemaDescriptor
+from swagger_agent.telemetry import Telemetry
 
 
 def collect_ref_hints_from_descriptor(descriptor: EndpointDescriptor) -> list[dict]:
@@ -93,6 +94,7 @@ def run_schema_loop(
     console: Console | None = None,
     max_depth: int = 10,
     event_callback: object | None = None,
+    telemetry: Telemetry | None = None,
 ) -> dict[str, dict]:
     """Run the schema extraction loop until all $refs are resolved.
 
@@ -205,6 +207,7 @@ def run_schema_loop(
             try:
                 descriptor, record = run_schema_extractor(
                     str(file_path), ctx, config=config,
+                    telemetry=telemetry,
                 )
                 return (schema_name, file_path, descriptor, record, None)
             except Exception as e:

@@ -16,6 +16,7 @@ from pathlib import Path
 from swagger_agent.config import LLMConfig, make_client
 from swagger_agent.models import SchemaDescriptor
 from swagger_agent.agents.schema_extractor.prompt import SCHEMA_EXTRACTOR_SYSTEM_PROMPT
+from swagger_agent.telemetry import LLMCall, Telemetry, measure_messages
 
 logger = logging.getLogger("swagger_agent.schema_extractor")
 
@@ -41,6 +42,7 @@ def run_schema_extractor(
     target_file: str,
     context: SchemaExtractorContext,
     config: LLMConfig | None = None,
+    telemetry: Telemetry | None = None,
 ) -> tuple[SchemaDescriptor, SchemaExtractorRunRecord]:
     """Run the Schema Extractor agent against a single model file.
 
@@ -80,6 +82,7 @@ def run_schema_extractor(
 
     # 3. Single instructor call
     logger.info("Extracting schemas from %s (%d lines)", target_file, file_lines)
+    input_chars = measure_messages(messages)
     start = time.monotonic()
 
     descriptor = client.chat.completions.create(
@@ -92,6 +95,19 @@ def run_schema_extractor(
     )
 
     duration_ms = (time.monotonic() - start) * 1000
+
+    if telemetry:
+        output_json = descriptor.model_dump_json()
+        telemetry.record(LLMCall(
+            agent="schema_extractor",
+            phase="extract",
+            model=model,
+            input_chars=input_chars,
+            output_chars=len(output_json),
+            duration_ms=duration_ms,
+            target_file=context.target_file,
+            timestamp=start,
+        ))
 
     # 4. Inject source_file (don't trust LLM to get the path right)
     descriptor.source_file = context.target_file
