@@ -8,6 +8,7 @@ all reachable schemas are extracted.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import logging
 import os
@@ -397,7 +398,7 @@ def run_schema_loop(
             else:
                 continue
             if leaf in all_schemas:
-                all_schemas[dotted_name] = all_schemas[leaf]
+                all_schemas[dotted_name] = copy.deepcopy(all_schemas[leaf])
                 if not quiet:
                     console.print(f"  [dim]Alias: {dotted_name} → {leaf}[/dim]")
                 logger.info("Created alias: %s → %s (same file)", dotted_name, leaf)

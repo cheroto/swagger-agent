@@ -322,8 +322,14 @@ def assemble_spec(
     if not spec.get("components"):
         del spec["components"]
 
+    class _NoAliasDumper(yaml.SafeDumper):
+        """Prevent YAML anchors/aliases — OpenAPI validators reject them."""
+        def ignore_aliases(self, data):
+            return True
+
     yaml_str = yaml.dump(
         spec,
+        Dumper=_NoAliasDumper,
         default_flow_style=False,
         sort_keys=False,
         allow_unicode=True,
