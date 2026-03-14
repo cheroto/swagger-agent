@@ -62,19 +62,47 @@ def _sanitize_ref_hint(name: str) -> str:
     return name.strip()
 
 
+_SPACE_COLLECTION_SUFFIXES = {"list", "array", "option", "seq", "set", "ref"}
+
+
+_MAP_WRAPPERS = frozenset({
+    "Map", "map", "Dict", "dict", "HashMap", "hashMap",
+    "Mapping", "OrderedDict", "defaultdict", "TreeMap", "LinkedHashMap",
+    "Record", "Object",
+})
+
+
 def _parse_ref_hint(name: str) -> tuple[bool, str]:
-    """Parse a ref_hint, detecting array wrappers.
+    """Parse a ref_hint, detecting array wrappers and map types.
 
     Returns (is_array, inner_type_name).
+    Map/Dict types are treated as plain object (no $ref needed).
     """
     name = _sanitize_ref_hint(name)
     m = re.match(r"^Optional\[(.+)\]$", name)
     if m:
         name = m.group(1).strip()
+
+    # Detect Map/Dict generics BEFORE the array pattern — Map<K,V> is not an array
+    m_generic = re.match(r"^(\w+)\s*[\[<](.+)[\]>]$", name)
+    if m_generic and m_generic.group(1) in _MAP_WRAPPERS:
+        return False, ""  # empty → renders as {type: object} via _EMPTY_REF_PLACEHOLDER
+
     m = _ARRAY_PATTERN.match(name)
     if m:
         inner = next(g for g in m.groups() if g is not None)
         return True, inner.strip()
+
+    # ML-family space-suffix collections: "Reading.t list" → array of Reading.t
+    parts = name.rsplit(" ", 1)
+    if len(parts) == 2 and parts[1].lower() in _SPACE_COLLECTION_SUFFIXES:
+        return True, parts[0].strip()
+
+    # Bare comma-separated types: "String, dynamic" → take first non-empty
+    if "," in name and "[" not in name and "<" not in name:
+        first = name.split(",")[0].strip()
+        return False, first if first else name
+
     return False, name
 
 

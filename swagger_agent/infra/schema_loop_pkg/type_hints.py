@@ -21,7 +21,7 @@ _BUILTIN_TYPES = frozenset({
     "double", "Double", "number", "Number", "boolean", "Boolean",
     "void", "Void", "byte", "Byte", "char", "short",
     "Object", "Map", "HashMap", "Array", "List", "Set",
-    "any", "unknown", "undefined", "null", "never",
+    "any", "unknown", "undefined", "null", "never", "dynamic",
 })
 
 # Wrappers that contain a single inner type (unwrap → resolve inner).
@@ -62,6 +62,15 @@ def _decompose_type_hint(name: str) -> list[str]:
     parts = name.rsplit(" ", 1)
     if len(parts) == 2 and parts[1].lower() in _SPACE_SUFFIXES:
         return _decompose_type_hint(parts[0])
+
+    # Bare comma-separated types: "String, dynamic" (leaked Map<K,V> contents).
+    # Split on commas and decompose each — if all are builtins, return [].
+    if "," in name and "[" not in name and "<" not in name:
+        parts = [p.strip() for p in name.split(",") if p.strip()]
+        result = []
+        for part in parts:
+            result.extend(_decompose_type_hint(part))
+        return result
 
     m = _GENERIC_RE.match(name)
     if not m:
