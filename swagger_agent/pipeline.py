@@ -250,22 +250,25 @@ def run_pipeline(
     for desc in descriptors:
         all_ref_hints.extend(collect_ref_hints_from_descriptor(desc))
 
-    # Deduplicate by ref_hint name
-    seen: set[str] = set()
+    # Deduplicate by (name, import_line, file_namespace) so that the same
+    # type name from different import contexts survives as separate hints.
+    seen: set[tuple[str, str, str]] = set()
     deduped_hints: list[dict] = []
     for hint in all_ref_hints:
-        if hint["ref_hint"] not in seen:
-            seen.add(hint["ref_hint"])
+        key = (hint["ref_hint"], hint.get("import_line", ""), hint.get("file_namespace", ""))
+        if key not in seen:
+            seen.add(key)
             deduped_hints.append(hint)
 
     inheritance_map: dict = {}
+    name_mapping: dict[tuple[str, str], str] = {}
     if deduped_hints:
         if not db:
             console.print(
                 f"  {len(deduped_hints)} unique ref(s): "
                 f"{', '.join(h['ref_hint'] for h in deduped_hints)}"
             )
-        schemas, inheritance_map = run_schema_loop(
+        schemas, inheritance_map, name_mapping = run_schema_loop(
             ref_hints=deduped_hints,
             framework=manifest.framework,
             project_root=target_path,
@@ -297,7 +300,11 @@ def run_pipeline(
         console.print(Rule(" Phase 4: Assembly ", style="bold blue"))
     t0 = time.monotonic()
 
-    assembly = assemble_spec(manifest, descriptors, schemas, inheritance_map=inheritance_map)
+    assembly = assemble_spec(
+        manifest, descriptors, schemas,
+        inheritance_map=inheritance_map,
+        name_mapping=name_mapping,
+    )
     result.spec = assembly.spec
     result.yaml_str = assembly.yaml_str
     result.timings["assembly"] = (time.monotonic() - t0) * 1000

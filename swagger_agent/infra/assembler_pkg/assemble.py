@@ -109,9 +109,12 @@ def _parse_union_ref_hint(name: str) -> list[str] | None:
     return [p for p in parts if p]
 
 
-def _build_schema_for_ref(ref_hint_obj) -> dict:
-    """Build the schema dict for a RefHint."""
-    return _build_ref(ref_hint_obj.ref_hint)
+def _build_schema_for_ref(ref_hint_obj, ref_rewrite: dict[str, str] | None = None) -> dict:
+    """Build the schema dict for a RefHint, applying name rewrites if any."""
+    name = ref_hint_obj.ref_hint
+    if ref_rewrite:
+        name = ref_rewrite.get(name, name)
+    return _build_ref(name)
 
 
 def _build_ref(name: str) -> dict:
@@ -146,7 +149,10 @@ def _derive_security_scheme(name: str) -> dict:
     return {"type": "http", "scheme": "bearer"}
 
 
-def _build_operation(ep: Endpoint) -> dict:
+def _build_operation(
+    ep: Endpoint,
+    ref_rewrite: dict[str, str] | None = None,
+) -> dict:
     """Build an OpenAPI operation object from an Endpoint model."""
     op: dict = {"operationId": ep.operation_id}
 
@@ -164,7 +170,7 @@ def _build_operation(ep: Endpoint) -> dict:
     if ep.request_body:
         rb = ep.request_body
         if rb.schema_ref:
-            schema = _build_schema_for_ref(rb.schema_ref)
+            schema = _build_schema_for_ref(rb.schema_ref, ref_rewrite)
         else:
             schema = {"type": "object"}
         op["requestBody"] = {
@@ -177,7 +183,9 @@ def _build_operation(ep: Endpoint) -> dict:
             entry: dict = {"description": resp.description or f"Response {resp.status_code}"}
             if resp.schema_ref:
                 entry["content"] = {
-                    "application/json": {"schema": _build_schema_for_ref(resp.schema_ref)}
+                    "application/json": {
+                        "schema": _build_schema_for_ref(resp.schema_ref, ref_rewrite),
+                    }
                 }
             responses[resp.status_code] = entry
         op["responses"] = responses
@@ -200,6 +208,7 @@ def assemble_spec(
     schemas: dict[str, dict],
     *,
     inheritance_map: dict | None = None,
+    name_mapping: dict[tuple[str, str], str] | None = None,
 ) -> AssemblyResult:
     """Assemble a full OpenAPI 3.0 spec from pipeline artifacts."""
     spec: dict = {
@@ -227,6 +236,15 @@ def assemble_spec(
     referenced_schemas: set[str] = set()
 
     for desc in descriptors:
+        # Build per-descriptor ref rewrite map from name_mapping
+        ref_rewrite: dict[str, str] | None = None
+        if name_mapping:
+            rw = {}
+            for (orig_name, src_file), qualified in name_mapping.items():
+                if src_file == desc.source_file and orig_name != qualified:
+                    rw[orig_name] = qualified
+            ref_rewrite = rw or None
+
         for ep in desc.endpoints:
             path_key = _normalize_path(manifest.base_path, ep.path)
             method = ep.method.lower()
@@ -236,13 +254,15 @@ def assemble_spec(
             if path_key not in spec["paths"]:
                 spec["paths"][path_key] = {}
 
-            spec["paths"][path_key][method] = _build_operation(ep)
+            spec["paths"][path_key][method] = _build_operation(ep, ref_rewrite)
 
-            # Track referenced schema names
+            # Track referenced schema names (using rewritten names)
             for ref_source in (
                 [ep.request_body.schema_ref] if ep.request_body and ep.request_body.schema_ref else []
             ) + [resp.schema_ref for resp in ep.responses if resp.schema_ref]:
                 hint_name = ref_source.ref_hint
+                if ref_rewrite:
+                    hint_name = ref_rewrite.get(hint_name, hint_name)
                 union_parts = _parse_union_ref_hint(hint_name)
                 if union_parts:
                     for part in union_parts:

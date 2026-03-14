@@ -11,8 +11,9 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
-from collections import deque
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -42,18 +43,66 @@ from .type_hints import _decompose_type_hint
 logger = logging.getLogger("swagger_agent.schema_loop")
 
 
+def _compute_qualified_names(
+    name: str,
+    file_paths: list[Path],
+    project_root: Path,
+) -> dict[str, str]:
+    """Compute unique qualified names for a type name that resolves to multiple files.
+
+    Finds the shortest parent directory component that disambiguates
+    all files, then prefixes the type name with it.
+
+    Returns: {str(file_path) → qualified_name}
+    """
+    rels = []
+    for fp in file_paths:
+        try:
+            rel = fp.relative_to(project_root)
+        except ValueError:
+            rel = fp
+        # Directory components only (exclude filename)
+        rels.append((str(fp), list(rel.parts[:-1])))
+
+    max_depth = max((len(parts) for _, parts in rels), default=1)
+
+    for depth in range(1, max_depth + 1):
+        components: dict[str, list[str]] = defaultdict(list)
+        for fk, parts in rels:
+            if len(parts) >= depth:
+                comp = parts[-depth]
+            else:
+                comp = "_".join(parts) if parts else "unknown"
+            components[comp].append(fk)
+
+        if all(len(fks) == 1 for fks in components.values()):
+            result = {}
+            for comp, fks in components.items():
+                clean = re.sub(r"[^a-zA-Z0-9_]", "", comp)
+                result[fks[0]] = f"{clean}_{name}" if clean else name
+            return result
+
+    # Fallback: use full relative path as qualifier
+    result = {}
+    for fk, parts in rels:
+        clean = "_".join(re.sub(r"[^a-zA-Z0-9_]", "", p) for p in parts)
+        result[fk] = f"{clean}_{name}" if clean else name
+    return result
+
+
 def collect_ref_hints_from_descriptor(descriptor: EndpointDescriptor) -> list[dict]:
     """Extract all ref_hints from an endpoint descriptor.
 
     Sanitizes ref_hint values (strips stale $ref prefixes like
-    '#/components/schemas/') before returning.
+    '#/components/schemas/') before returning.  Each hint is tagged with
+    ``_source_file`` so collision detection can trace back to the
+    originating descriptor.
 
-    All resolution types are included — even "unresolvable" hints are
-    passed through so ctags/grep can attempt resolution. The LLM's
-    classification is just a hint; infrastructure should always try.
+    Deduplicates by (name, import_line, file_namespace) so that the same
+    type name from different import contexts survives as separate hints.
     """
     hints: list[dict] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str, str]] = set()
 
     for ep in descriptor.endpoints:
         refs = []
@@ -65,10 +114,12 @@ def collect_ref_hints_from_descriptor(descriptor: EndpointDescriptor) -> list[di
 
         for ref in refs:
             clean_name = _sanitize_ref_hint(ref.ref_hint)
-            if clean_name not in seen:
-                seen.add(clean_name)
+            key = (clean_name, ref.import_line, ref.file_namespace)
+            if key not in seen:
+                seen.add(key)
                 hint = ref.model_dump(by_alias=True)
                 hint["ref_hint"] = clean_name
+                hint["_source_file"] = descriptor.source_file
                 hints.append(hint)
 
     return hints
@@ -83,11 +134,13 @@ def run_schema_loop(
     max_depth: int = 10,
     event_callback: object | None = None,
     telemetry: Telemetry | None = None,
-) -> dict[str, dict]:
+) -> tuple[dict[str, dict], dict, dict[tuple[str, str], str]]:
     """Run the schema extraction loop until all $refs are resolved.
 
     Returns:
-        Tuple of (schemas dict, inheritance map).
+        Tuple of (schemas dict, inheritance map, name_mapping).
+        name_mapping maps (original_ref_hint, source_file) → qualified schema name.
+        It is non-empty only when name collisions required qualification.
     """
     console = console or Console(stderr=True)
     config = config or LLMConfig()
@@ -113,22 +166,73 @@ def run_schema_loop(
     extracted_files: set[str] = set()
     queue: deque[tuple[str, str | None]] = deque()
 
-    # 1. Seed the queue from ref_hints (sanitize, decompose, skip builtins)
+    # Maps qualified names back to (original_name, import_source) for resolution
+    qualified_context: dict[str, tuple[str, str | None]] = {}
+    # Maps (original_ref_hint, source_descriptor_file) → qualified schema name
+    name_mapping: dict[tuple[str, str], str] = {}
+
+    # 1. Pre-resolve ref_hints to detect name collisions
+    #    When the same type name resolves to different files from different
+    #    import contexts, each gets a unique qualified name.
+    hint_triples: list[tuple[str, str | None, str]] = []
     for hint in ref_hints:
         raw_name = _sanitize_ref_hint(hint["ref_hint"])
-
         import_source = (
             hint.get("import_line")
             or hint.get("file_namespace")
             or hint.get("import_source")
             or None
         )
+        source_file = hint.get("_source_file", "")
         inner_names = _decompose_type_hint(raw_name)
         if not inner_names:
             logger.info("Skipping builtin type hint: %s", raw_name)
         for name in inner_names:
-            if name not in all_schemas:
-                queue.append((name, import_source))
+            hint_triples.append((name, import_source, source_file))
+
+    # Pre-resolve each hint to its file path
+    name_to_files: dict[str, dict[str | None, str | None]] = defaultdict(dict)
+    triple_resolutions: dict[tuple[str, str | None, str], str | None] = {}
+    for name, import_source, source_file in hint_triples:
+        file_path = resolve_type(name, import_source, ctags_index, project_root)
+        file_key = str(file_path) if file_path else None
+        name_to_files[name].setdefault(file_key, import_source)
+        triple_resolutions[(name, import_source, source_file)] = file_key
+
+    # Detect collisions: same name resolving to multiple distinct files
+    collision_quals: dict[str, dict[str, str]] = {}
+    for name, file_dict in name_to_files.items():
+        real_files = {k: v for k, v in file_dict.items() if k is not None}
+        if len(real_files) > 1:
+            qual_map = _compute_qualified_names(
+                name, [Path(k) for k in real_files], project_root,
+            )
+            collision_quals[name] = qual_map
+            if not quiet:
+                console.print(f"  [yellow]Name collision:[/yellow] {name} → {len(real_files)} files")
+                for fk, qn in qual_map.items():
+                    console.print(f"    {qn} ← {Path(fk).relative_to(project_root)}")
+            _emit("collision", name=name, qualified_names=list(qual_map.values()))
+
+    # Seed queue with (possibly qualified) names
+    seeded: set[str] = set()
+    for name, import_source, source_file in hint_triples:
+        if name in collision_quals:
+            file_key = triple_resolutions.get((name, import_source, source_file))
+            if file_key and file_key in collision_quals[name]:
+                qualified = collision_quals[name][file_key]
+            else:
+                qualified = name
+            name_mapping[(name, source_file)] = qualified
+            if qualified != name:
+                qualified_context[qualified] = (name, import_source)
+        else:
+            qualified = name
+            name_mapping[(name, source_file)] = name
+
+        if qualified not in seeded and qualified not in all_schemas:
+            queue.append((qualified, import_source))
+            seeded.add(qualified)
 
     depth = 0
     while queue and depth < max_depth:
@@ -145,23 +249,30 @@ def run_schema_loop(
         extraction_tasks: list[tuple[str, Path, dict[str, dict]]] = []
         round_queued_files: set[str] = set()
         schemas_snapshot = dict(all_schemas)
+        skipped_dotted: list[str] = []  # dotted names that hit "already extracted"
 
         for schema_name, import_source in round_items:
             if schema_name in all_schemas:
                 continue
 
-            inner_names = _decompose_type_hint(schema_name)
+            # For qualified names from collision resolution, resolve using the
+            # original name and import context
+            resolve_name = schema_name
+            if schema_name in qualified_context:
+                resolve_name, import_source = qualified_context[schema_name]
+
+            inner_names = _decompose_type_hint(resolve_name)
             if not inner_names:
                 logger.info("Skipping builtin type in resolution: %s", schema_name)
                 continue
-            if inner_names != [schema_name]:
+            if inner_names != [resolve_name]:
                 for inner in inner_names:
                     if inner not in all_schemas:
                         queue.append((inner, import_source))
                 continue
 
             file_path = resolve_type(
-                schema_name, import_source, ctags_index, project_root,
+                resolve_name, import_source, ctags_index, project_root,
             )
 
             if file_path is None:
@@ -178,9 +289,13 @@ def run_schema_loop(
 
             file_key = str(file_path)
             if file_key in extracted_files or file_key in round_queued_files:
-                if not quiet:
-                    console.print(f"  [dim]Already extracted {file_path.name}, skipping[/dim]")
-                _emit("already_extracted", file=file_path.name)
+                # Track dotted names for deferred alias creation after Phase B
+                if "." in schema_name or schema_name in qualified_context:
+                    skipped_dotted.append(schema_name)
+                else:
+                    if not quiet:
+                        console.print(f"  [dim]Already extracted {file_path.name}, skipping[/dim]")
+                    _emit("already_extracted", file=file_path.name)
                 continue
 
             if not quiet:
@@ -267,6 +382,26 @@ def run_schema_loop(
 
         all_schemas.update(round_new_schemas)
 
+        # Create aliases for dotted/qualified names that resolved to
+        # already-extracted files.  The leaf schema exists in all_schemas
+        # under its short name; we just need to add the alias.
+        for dotted_name in skipped_dotted:
+            if dotted_name in all_schemas:
+                continue
+            # Determine the leaf name to look up
+            if dotted_name in qualified_context:
+                original, _ = qualified_context[dotted_name]
+                leaf = original.rsplit(".", 1)[1] if "." in original else original
+            elif "." in dotted_name:
+                leaf = dotted_name.rsplit(".", 1)[1]
+            else:
+                continue
+            if leaf in all_schemas:
+                all_schemas[dotted_name] = all_schemas[leaf]
+                if not quiet:
+                    console.print(f"  [dim]Alias: {dotted_name} → {leaf}[/dim]")
+                logger.info("Created alias: %s → %s (same file)", dotted_name, leaf)
+
         # Scan for new $ref targets
         raw_refs = scan_refs_in_schemas(round_new_schemas)
         new_refs: set[str] = set()
@@ -314,7 +449,7 @@ def run_schema_loop(
                     "x-unresolved": True,
                 }
 
-    return all_schemas, inheritance_map
+    return all_schemas, inheritance_map, name_mapping
 
 
 def print_schema_summary(schemas: dict[str, dict], console: Console) -> None:
@@ -430,7 +565,7 @@ def main() -> None:
     )
     console.print()
 
-    all_schemas, _inheritance_map = run_schema_loop(
+    all_schemas, _inheritance_map, _name_mapping = run_schema_loop(
         ref_hints=ref_hints,
         framework=args.framework,
         project_root=project_root,
