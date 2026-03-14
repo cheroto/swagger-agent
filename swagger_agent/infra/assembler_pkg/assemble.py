@@ -277,10 +277,11 @@ def assemble_spec(
                 }
 
     # Post-processing
+    # Inline primitive $refs across the entire spec (paths + schemas)
+    inline_primitive_refs(spec)
     schemas_dict = spec.get("components", {}).get("schemas")
     if schemas_dict:
         _sanitize_schemas(schemas_dict)
-        inline_primitive_refs(schemas_dict)
         _fix_ref_siblings(schemas_dict)
     _break_ref_cycles(spec)
     _normalize_schema_case(spec)
