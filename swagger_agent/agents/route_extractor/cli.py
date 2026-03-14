@@ -45,12 +45,17 @@ def main() -> None:
     parser.add_argument("--manifest", metavar="PATH", help="Path to a discovery manifest JSON")
     parser.add_argument("--dump-json", metavar="PATH", help="Save full run record to JSON file")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show full JSON descriptor")
-    parser.add_argument("--cache", action="store_true", help="Enable LLM response caching")
+    cache_group = parser.add_mutually_exclusive_group()
+    cache_group.add_argument("--no-cache", action="store_true", help="Disable LLM response cache")
+    cache_group.add_argument("--overwrite-cache", action="store_true", help="Overwrite existing cache entries")
     args = parser.parse_args()
 
-    if args.cache:
-        from swagger_agent.config import enable_cache
-        enable_cache()
+    if args.no_cache:
+        from swagger_agent.config import set_cache_mode
+        set_cache_mode("off")
+    elif args.overwrite_cache:
+        from swagger_agent.config import set_cache_mode
+        set_cache_mode("overwrite")
 
     target_file = os.path.abspath(args.target_file)
     if not os.path.isfile(target_file):

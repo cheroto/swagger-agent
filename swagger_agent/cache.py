@@ -80,11 +80,14 @@ def clear() -> int:
     return count
 
 
-def wrap_client(client: Any, base_url: str) -> Any:
+def wrap_client(client: Any, base_url: str, *, overwrite: bool = False) -> Any:
     """Wrap an instructor client so that chat.completions.create() is cached.
 
     The wrapper intercepts calls, checks the cache, and on miss delegates to
     the real client, caches the result, then returns it.
+
+    When ``overwrite=True``, existing cache entries are ignored (always calls
+    the LLM) and the result overwrites any previous entry.
     """
     real_create = client.chat.completions.create
 
@@ -100,12 +103,16 @@ def wrap_client(client: Any, base_url: str) -> Any:
         # field description changes invalidate cached responses.
         schema_str = json.dumps(response_model.model_json_schema(), sort_keys=True)
         key = _cache_key(model, temperature, base_url, messages, response_model.__name__, schema_str)
-        cached = load(key)
-        if cached is not None:
-            logger.info("Cache HIT: %s (model=%s)", response_model.__name__, model)
-            return response_model.model_validate(cached)
 
-        logger.info("Cache MISS: %s (model=%s)", response_model.__name__, model)
+        if not overwrite:
+            cached = load(key)
+            if cached is not None:
+                logger.info("Cache HIT: %s (model=%s)", response_model.__name__, model)
+                return response_model.model_validate(cached)
+
+        logger.info("Cache %s: %s (model=%s)",
+                     "OVERWRITE" if overwrite else "MISS",
+                     response_model.__name__, model)
         result = real_create(
             model=model,
             response_model=response_model,

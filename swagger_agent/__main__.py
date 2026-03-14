@@ -140,12 +140,67 @@ def _print_completeness(completeness, console: Console) -> None:
     console.print(table)
 
 
+def _is_git_url(target: str) -> bool:
+    """Check if target looks like a Git URL."""
+    return (
+        target.startswith(("https://", "http://", "git@", "ssh://"))
+        or (target.count("/") == 1 and not os.path.exists(target))  # owner/repo shorthand
+    )
+
+
+def _clone_repo(url: str, ref: str | None = None) -> str:
+    """Clone a Git repo to a temp directory. Returns the cloned path."""
+    import subprocess
+    import tempfile
+
+    # Expand owner/repo shorthand to GitHub URL
+    if url.count("/") == 1 and not url.startswith(("https://", "http://", "git@", "ssh://")):
+        url = f"https://github.com/{url}.git"
+
+    # Derive repo name for the temp dir
+    repo_name = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+    clone_dir = os.path.join(tempfile.gettempdir(), "swagger-agent", repo_name)
+
+    if os.path.isdir(clone_dir):
+        import shutil
+        shutil.rmtree(clone_dir)
+
+    cmd = ["git", "clone", "--depth", "1"]
+    if ref:
+        cmd += ["--branch", ref]
+    cmd += [url, clone_dir]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        if ref and "not found" in e.stderr:
+            # Branch/tag not found — clone full and checkout
+            subprocess.run(
+                ["git", "clone", url, clone_dir],
+                check=True, capture_output=True, text=True,
+            )
+            subprocess.run(
+                ["git", "checkout", ref],
+                check=True, capture_output=True, text=True,
+                cwd=clone_dir,
+            )
+        else:
+            print(f"Error cloning {url}: {e.stderr}", file=sys.stderr)
+            sys.exit(1)
+
+    return clone_dir
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="swagger-agent",
         description="Generate an OpenAPI 3.0 spec from a codebase using multi-agent extraction",
     )
-    parser.add_argument("target_dir", nargs="?", help="Path to the target project directory")
+    parser.add_argument(
+        "target", nargs="?",
+        help="Local path or Git URL (GitHub/GitLab). URLs are cloned to a temp directory.",
+    )
+    parser.add_argument("--ref", metavar="REF", help="Git branch, tag, or commit to checkout after cloning")
     parser.add_argument("-o", "--output", metavar="PATH", help="Write YAML to file instead of stdout")
     parser.add_argument("--dump-json", metavar="PATH", help="Save full pipeline result as JSON")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
@@ -162,9 +217,14 @@ def main() -> None:
         "--telemetry-from", metavar="PATH",
         help="Print telemetry from a prior result.json and exit (no run)",
     )
-    parser.add_argument(
-        "--cache", action="store_true",
-        help="Enable LLM response caching (replay identical calls from .cache/llm/)",
+    cache_group = parser.add_mutually_exclusive_group()
+    cache_group.add_argument(
+        "--no-cache", action="store_true",
+        help="Disable LLM response cache (always call the LLM)",
+    )
+    cache_group.add_argument(
+        "--overwrite-cache", action="store_true",
+        help="Ignore existing cache entries and overwrite with fresh LLM responses",
     )
     parser.add_argument(
         "--clear-cache", action="store_true",
@@ -195,25 +255,43 @@ def main() -> None:
         print(f"Cleared {n} cached LLM response(s).")
         sys.exit(0)
 
-    # -- Enable cache if requested --
-    if args.cache:
-        from swagger_agent.config import enable_cache
-        enable_cache()
+    # -- Cache mode --
+    if args.no_cache:
+        from swagger_agent.config import set_cache_mode
+        set_cache_mode("off")
+    elif args.overwrite_cache:
+        from swagger_agent.config import set_cache_mode
+        set_cache_mode("overwrite")
 
     # Validate target
-    if not args.target_dir:
-        parser.error("target_dir is required (unless using --telemetry-from)")
-    if not os.path.isdir(args.target_dir):
-        print(f"Error: directory not found: {args.target_dir}", file=sys.stderr)
-        sys.exit(1)
+    if not args.target:
+        parser.error("target is required (unless using --telemetry-from)")
 
     console = Console(stderr=True)
+
+    # Clone remote repos
+    cloned = False
+    target_dir = args.target
+    if _is_git_url(args.target):
+        console.print(f"[dim]Cloning {args.target}...[/dim]")
+        target_dir = _clone_repo(args.target, ref=args.ref)
+        cloned = True
+        console.print(f"[dim]Cloned to {target_dir}[/dim]")
+    elif args.ref:
+        parser.error("--ref can only be used with a Git URL")
+
+    if not os.path.isdir(target_dir):
+        print(f"Error: directory not found: {target_dir}", file=sys.stderr)
+        sys.exit(1)
+
     config = LLMConfig()
 
     console.print(f"[dim]LLM: {config.llm_base_url} / {config.llm_model}[/dim]")
-    console.print(f"[dim]Target: {os.path.abspath(args.target_dir)}[/dim]")
-    if args.cache:
-        console.print("[dim]Cache: enabled (.cache/llm/)[/dim]")
+    console.print(f"[dim]Target: {os.path.abspath(target_dir)}[/dim]")
+    if args.no_cache:
+        console.print("[dim]Cache: disabled[/dim]")
+    elif args.overwrite_cache:
+        console.print("[dim]Cache: overwrite mode[/dim]")
     console.print()
 
     # Use live dashboard when stderr is a TTY (unless --no-dashboard)
@@ -227,7 +305,7 @@ def main() -> None:
 
     try:
         result = run_pipeline(
-            args.target_dir, config=config, console=console, dashboard=dashboard,
+            target_dir, config=config, console=console, dashboard=dashboard,
             skip_scout=args.skip_scout,
         )
     except BaseException:
@@ -275,7 +353,7 @@ def main() -> None:
 
     if not yaml_path and not json_path:
         # Default: write both YAML and JSON to outputs/<repo_name>/
-        output_dir = _resolve_output_dir(args.target_dir)
+        output_dir = _resolve_output_dir(target_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         yaml_path = str(output_dir / "openapi.yaml")
         json_path = str(output_dir / "result.json")

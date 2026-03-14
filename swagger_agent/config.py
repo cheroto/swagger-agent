@@ -50,13 +50,14 @@ class LLMConfig(BaseSettings):
         return base_url, model
 
 
-# Module-level cache toggle — set by CLI before any clients are created
-_cache_enabled = False
+# Module-level cache mode — set by CLI before any clients are created
+# "on" = read+write (default), "off" = no cache, "overwrite" = skip reads, write fresh
+_cache_mode: str = "on"
 
 
-def enable_cache() -> None:
-    global _cache_enabled
-    _cache_enabled = True
+def set_cache_mode(mode: str) -> None:
+    global _cache_mode
+    _cache_mode = mode
 
 
 def make_client(config: LLMConfig, agent: str) -> tuple[instructor.Instructor, str]:
@@ -65,9 +66,9 @@ def make_client(config: LLMConfig, agent: str) -> tuple[instructor.Instructor, s
     raw_client = OpenAI(base_url=base_url, api_key=config.llm_api_key)
     mode = _INSTRUCTOR_MODES.get(config.instructor_mode.lower(), instructor.Mode.TOOLS)
     client = instructor.from_openai(raw_client, mode=mode)
-    if _cache_enabled:
+    if _cache_mode != "off":
         from swagger_agent.cache import wrap_client
-        client = wrap_client(client, base_url)
+        client = wrap_client(client, base_url, overwrite=(_cache_mode == "overwrite"))
     return client, model
 
 

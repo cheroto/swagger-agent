@@ -19,8 +19,13 @@ pip install -e .
 # Configure LLM (see Configuration below)
 cp .env.example .env  # edit with your LLM settings
 
-# Run against a codebase
+# Run against a local codebase
 python -m swagger_agent /path/to/your/project
+
+# Run against a GitHub/GitLab repo
+python -m swagger_agent https://github.com/owner/repo
+python -m swagger_agent owner/repo              # GitHub shorthand
+python -m swagger_agent owner/repo --ref v2.0    # specific branch/tag/commit
 
 # Output goes to outputs/<project-name>/openapi.yaml
 ```
@@ -116,11 +121,22 @@ MAX_WORKERS_SCHEMA=3
 ## CLI usage
 
 ```bash
-# Basic run (outputs to outputs/<project-name>/)
+# Local project
 python -m swagger_agent /path/to/project
+
+# Remote repo (cloned to /tmp/swagger-agent/<repo>)
+python -m swagger_agent https://github.com/owner/repo
+python -m swagger_agent owner/repo                   # GitHub shorthand
+python -m swagger_agent git@gitlab.com:org/repo.git   # SSH URL
+python -m swagger_agent owner/repo --ref develop      # branch/tag/commit
 
 # Custom output path
 python -m swagger_agent /path/to/project -o spec.yaml
+
+# Cache control (cache is ON by default)
+python -m swagger_agent /path/to/project --no-cache         # skip cache entirely
+python -m swagger_agent /path/to/project --overwrite-cache  # re-run LLM calls, update cache
+python -m swagger_agent --clear-cache                       # wipe all cached responses
 
 # Show per-LLM-call telemetry
 python -m swagger_agent /path/to/project --telemetry
@@ -130,9 +146,6 @@ python -m swagger_agent --telemetry-from outputs/my-project/result.json
 
 # Skip the Scout agent (use deterministic prescan only)
 python -m swagger_agent /path/to/project --skip-scout
-
-# Verbose timing output
-python -m swagger_agent /path/to/project -v
 
 # Disable live dashboard
 python -m swagger_agent /path/to/project --no-dashboard
