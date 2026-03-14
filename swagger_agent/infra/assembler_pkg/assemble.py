@@ -110,13 +110,7 @@ def _parse_union_ref_hint(name: str) -> list[str] | None:
 
 
 def _build_schema_for_ref(ref_hint_obj) -> dict:
-    """Build the schema dict for a RefHint, respecting resolution.
-
-    Inferred types (no real type in code) get inlined as {type: "object"}
-    instead of a $ref that would be unresolvable.
-    """
-    if hasattr(ref_hint_obj, "resolution") and ref_hint_obj.resolution == "inferred":
-        return {"type": "object", "description": f"Inferred type: {ref_hint_obj.ref_hint}"}
+    """Build the schema dict for a RefHint."""
     return _build_ref(ref_hint_obj.ref_hint)
 
 
@@ -244,12 +238,10 @@ def assemble_spec(
 
             spec["paths"][path_key][method] = _build_operation(ep)
 
-            # Track referenced schema names (skip inferred — they're inlined)
+            # Track referenced schema names
             for ref_source in (
                 [ep.request_body.schema_ref] if ep.request_body and ep.request_body.schema_ref else []
             ) + [resp.schema_ref for resp in ep.responses if resp.schema_ref]:
-                if hasattr(ref_source, "resolution") and ref_source.resolution == "inferred":
-                    continue
                 hint_name = ref_source.ref_hint
                 union_parts = _parse_union_ref_hint(hint_name)
                 if union_parts:

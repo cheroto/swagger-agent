@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field
 
 class RefHint(BaseModel):
     ref_hint: str = Field(description="Type name as it appears in code. Use the inner type only, strip collection wrappers: List<Article> → 'Article'.")
-    resolution: Literal["import", "class_to_file", "unresolvable", "inferred"] = Field(description="How to resolve this type. 'import' = real type, used as a type annotation (var x: MyType, param: MyType, @RequestBody MyType) and found in an import/require/using statement — provide import_line. 'class_to_file' = real type used as a type annotation, but no explicit import (same package/namespace). 'unresolvable' = framework/language builtin (Response, IActionResult, HttpResponse, int, string). 'inferred' = NO type with this name exists as a class/struct/interface/type declaration — you are inventing a descriptive name for a function call return (e.g. dtos.CreateSomething(args) returns a map/dict, not a declared type), an anonymous/inline shape ({ email: string }), or a dynamic value with no type annotation.")
-    import_line: str = Field(default="", description="The exact import/require/using statement that imports this type. Only meaningful when resolution='import'. Empty string otherwise.")
+    resolution: Literal["import", "class_to_file", "unresolvable"] = Field(description="'import' = found the import/require/using statement for this type's package — provide import_line. 'class_to_file' = same namespace/package, no explicit import needed. 'unresolvable' = framework/language builtin (Response, IActionResult, int, string) or external package type.")
+    import_line: str = Field(default="", description="The exact import/require/using statement. Only meaningful when resolution='import'. Empty string otherwise.")
     file_namespace: str = Field(default="", description="The namespace/package/module declaration of the current file (e.g. 'namespace Conduit.Features.Articles;', 'package com.example.users;'). Helps disambiguate same-name types across packages.")
 
 
