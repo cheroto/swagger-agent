@@ -420,3 +420,227 @@ The existing e2e test structure has a **coverage gap** that hides this systemic 
 
 - 9jauni
 - energy-monitoring-app
+
+---
+
+# Polymorphism / Discriminated Union Test Runs
+
+Two repos specifically chosen to test ctags inheritance discovery and oneOf/discriminator assembly.
+
+## 14. dograh (Python/FastAPI — discriminated unions)
+
+**Target polymorphism:** `ToolDefinition = Annotated[Union[HttpApiToolDefinition, EndCallToolDefinition, TransferCallToolDefinition], Field(discriminator="type")]` in `api/routes/tool.py`. Each subtype has a different config shape (`HttpApiConfig`, `EndCallConfig`, `TransferCallConfig`).
+
+**Pipeline result:** 60 endpoints, 30 schemas, 1 validation error, 19 warnings
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Route files found | 8 / 24 | Scout missed 16 route files including tool.py |
+| Endpoints extracted | 60 | From 8 files only |
+| Schemas | 30 | Resolved from ref_hints |
+| Validation errors | 1 | `ge`/`le` instead of `minimum`/`maximum` |
+| Unresolved schemas | 2 | `str, Any` and `List[TestSessionResponse]` |
+| Security schemes | BearerAuth | Correct |
+| Servers | app.dograh.com, localhost:8000 | Correct |
+| Total time | 395s | |
+
+### Issues found
+
+#### ISSUE D1: Scout missed 16/24 route files including tool.py — **LLM/prompt issue**
+
+Scout found only 8 route files out of 24 in `api/routes/`. The `tool.py` file — which contains the key polymorphic `ToolDefinition` discriminated union — was not discovered. Other missed files include `workflow.py`, `organization.py`, `integration.py`, `credentials.py`, `reports.py`, and 11 more.
+
+**Category:** LLM/prompt. The Scout's exploration strategy failed to enumerate all files in the `api/routes/` directory. A simple `glob("api/routes/*.py")` would have found them all. The prescan also returned 0 tentative routes (prescan framework detection failed).
+
+**Impact:** Critical — the entire polymorphism test case (ToolDefinition) was never exercised because the file was never found.
+
+#### ISSUE D2: Pydantic constraint names instead of OpenAPI — **LLM/prompt issue**
+
+`ChunkSearchRequestSchema.limit` has `ge: 1, le: 50` instead of `minimum: 1, maximum: 50`. Same for `min_similarity` with `ge: 0.0, le: 1.0`. This causes a validation error.
+
+**Category:** LLM/prompt. The schema extractor LLM output Pydantic field constraint names (`ge`/`le`) instead of OpenAPI JSON Schema constraint names (`minimum`/`maximum`). The LLM is reading Pydantic source code and faithfully copying Pydantic's naming rather than translating to OpenAPI.
+
+**Impact:** Medium — spec is structurally invalid at these schemas. Any consumer will reject these constraints.
+
+**Possible fix (infra):** Post-processing could deterministically rename `ge`→`minimum`, `le`→`maximum`, `gt`→`exclusiveMinimum`, `lt`→`exclusiveMaximum` in assembled schemas. This is a known Pydantic→OpenAPI translation.
+
+#### ISSUE D3: Duplicate schema extractions — same file extracted up to 7 times — **infra/bug**
+
+`user.py` was extracted 7 times, `looptalk.py` 4 times, `knowledge_base.py` 3 times. Total: 24 schema extraction calls for 10 unique files. Most duplicates hit cache (0ms) but the first call for each is wasted.
+
+**Category:** Infra/bug. The schema loop is re-queuing files that have already been extracted. The deduplication logic in the resolution loop isn't preventing the same file from being scheduled multiple times when multiple ref_hints resolve to the same file.
+
+**Impact:** Low (cache mitigates runtime cost) but wasteful and indicates a logic gap in the schema loop's visited-file tracking.
+
+#### ISSUE D4: `List[TestSessionResponse]` unresolved — **infra/parsing**
+
+The ref_hint `List[TestSessionResponse]` was emitted as-is by the LLM instead of just `TestSessionResponse`. The ref resolver correctly logs "Could not resolve List[TestSessionResponse]" but doesn't strip the `List[...]` wrapper to resolve the inner type.
+
+**Category:** Infra/parsing. The ref resolver should strip generic type wrappers (`List[X]`, `Optional[X]`, `Dict[K, V]`) to extract the inner type name and resolve that instead.
+
+**Impact:** Medium — any response typed as `List[SomeModel]` will fail resolution. This is a common pattern in FastAPI.
+
+#### ISSUE D5: `str, Any` as schema name — **infra/parsing**
+
+A ref_hint of `Dict` resolved to a file but produced no usable schema. The unresolved schema `str, Any` suggests the LLM output `Dict[str, Any]` and infrastructure parsed it into a schema name verbatim.
+
+**Category:** Infra/parsing. `Dict`, `str`, `Any` are Python builtins, not user-defined schemas. The ref resolver should skip these (mark as unresolvable) rather than attempting resolution.
+
+**Impact:** Low — cosmetic but pollutes the schema list.
+
+#### ISSUE D6: Pydantic discriminated unions not detected by ctags inheritance — **infra/gap**
+
+The `ToolDefinition = Annotated[Union[HttpApiToolDefinition, EndCallToolDefinition, TransferCallToolDefinition], Field(discriminator="type")]` pattern uses type aliases and `Union`, not class inheritance. Ctags sees `HttpApiToolDefinition(BaseModel)` — it inherits from `BaseModel`, not from a domain-specific base class. The ctags inheritance feature only detects class hierarchy polymorphism (parent→child), not Pydantic discriminated unions declared via `Annotated[Union[...]]`.
+
+**Category:** Infra/deterministic gap. The ctags inheritance map correctly reports BaseModel as having hundreds of children, but there's no way to know which subset forms a discriminated union without reading the `Union[...]` declaration. This is a fundamentally different polymorphism pattern than class inheritance hierarchies.
+
+**Impact:** High for Python/Pydantic codebases. Discriminated unions via `Annotated[Union[...], Field(discriminator=...)]` are the standard Pydantic pattern for polymorphism. The ctags inheritance feature doesn't help here at all.
+
+---
+
+## 15. letta (Python/FastAPI — large-scale discriminated unions + class inheritance)
+
+**Target polymorphism:**
+- `ModelSettingsUnion` — 13 provider subtypes (`OpenAIModelSettings`, `AnthropicModelSettings`, etc.) discriminated by `provider_type`
+- `ManagerConfigUnion` — 5 manager subtypes via class inheritance from `ManagerConfig`, discriminated by `manager_type`
+- `ToolRuleUnion`, `ResponseFormatUnion`, `ImageSourceUnion`, `LettaMessageUnion` — additional unions
+
+**Pipeline result:** 270 endpoints, 438 schemas, 1 validation error, 32 unresolved schemas
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Route files found | 37 | Scout found extensive route tree |
+| Endpoints extracted | 270 | Large API surface |
+| Schemas | 438 (414 resolved, 24 unresolved) | 3 resolution rounds |
+| Validation errors | 1 | Same ge/le Pydantic constraint issue |
+| Unresolved schemas | 32 | Mix of builtins, Union types, external types |
+| Security schemes | BearerAuth | Correct |
+| Servers | localhost:8083 | Correct |
+| Total time | 2340s (~39 min) | |
+| LLM calls | 236 | 77 route extraction + 159 schema extraction |
+
+### Issues found
+
+#### ISSUE L1: `ModelSettingsUnion` correctly assembled with oneOf + discriminator — **SUCCESS**
+
+The ctags inheritance feature correctly detected that `OpenAIModelSettings`, `AnthropicModelSettings`, `GoogleAIModelSettings`, etc. all inherit from a common base. The assembler produced:
+
+```yaml
+ModelSettingsUnion:
+  oneOf:
+    - $ref: '#/components/schemas/OpenAIModelSettings'
+    - $ref: '#/components/schemas/AnthropicModelSettings'
+    # ... 11 more
+  discriminator:
+    propertyName: provider_type
+```
+
+All 13 subtypes present with correct discriminator. This is the ctags inheritance feature working as designed.
+
+#### ISSUE L2: `ManagerConfigUnion` has oneOf but MISSING discriminator — **infra/bug**
+
+`ManagerConfigUnion` correctly has 5 subtypes via `oneOf` but lacks `discriminator: { propertyName: manager_type }`. The source code clearly has `manager_type: Literal[ManagerType.xxx]` on each subtype. `ModelSettingsUnion` got a discriminator but `ManagerConfigUnion` did not.
+
+**Category:** Infra/bug. The assembler's discriminator detection logic is inconsistent — it found `provider_type` on ModelSettings subtypes but missed `manager_type` on Manager subtypes. Likely the discriminator detection relies on enum property heuristics that don't match all patterns.
+
+**Impact:** Medium — without a discriminator, API consumers can't programmatically determine which subtype is present. The oneOf is still correct, just incomplete.
+
+#### ISSUE L3: Union type names emitted as schema names — **infra/parsing**
+
+32 unresolved schemas include raw Python type expressions used as schema names:
+- `Union[StdioServerConfig, SSEServerConfig, StreamableHTTPServerConfig]`
+- `Union[UpdateStdioMCPServer, UpdateSSEMCPServer, UpdateStreamableHTTPMCPServer]`
+- `dict[str, Union[SSEServerConfig, StdioServerConfig, StreamableHTTPServerConfig]]`
+- `List[str]`, `Dict`, `str`, `int`, `float`
+
+**Category:** Infra/parsing. The LLM emits Python type annotations as ref_hints, and infrastructure passes them through verbatim as schema names. Two sub-issues:
+1. **Builtin types** (`str`, `int`, `float`, `Dict`, `List[str]`) should be mapped to JSON Schema primitives, not treated as schema refs.
+2. **Union types** should be decomposed: `Union[A, B, C]` → resolve each of A, B, C individually, then assemble as `oneOf`.
+
+**Impact:** High — 32 unresolved schemas is significant. Many of these are resolvable if the individual types within the Union were extracted.
+
+#### ISSUE L4: Duplicate schema extractions — same file up to 12 times — **infra/bug**
+
+Same issue as dograh but worse at scale: `agents.py` extracted 12x, `enums.py` 9x, `letta_request.py` 6x. Total: 159 schema calls for 69 unique files. Cache mitigates runtime (0ms on hits) but first-time runs waste significant LLM time.
+
+**Category:** Infra/bug. Same root cause as D3 — schema loop re-queues already-processed files. At letta's scale (150 initial pending refs), this amplifies significantly.
+
+**Impact:** Medium — adds ~30% overhead to schema resolution phase even with dedup via cache.
+
+#### ISSUE L5: `ToolRuleUnion`, `ResponseFormatUnion`, `LettaMessageUnion` etc. unresolved — **infra/parsing + LLM**
+
+Several Pydantic discriminated unions that are key API types ended up as unresolved schemas:
+- `LettaMessageUnion` — used in message endpoints
+- `LettaMessageUpdateUnion` — used in message update endpoints
+- `LettaMessageContentUnion` — message content types
+- `ResponseFormatUnion` — response format configuration
+- `SandboxConfigUnion` — sandbox config types
+- `MessageCreateUnion` — message creation types
+- `CreateMCPServerUnion`, `UpdateMCPServerUnion` — MCP server types
+
+**Category:** Mixed. The LLM correctly identified these as ref_hints, but they're declared as `Annotated[Union[...], Field(discriminator=...)]` type aliases — same pattern as dograh's `ToolDefinition`. The ref resolver can't resolve a Union type alias name to a single file because it's not a class.
+
+**Impact:** High — these are core API types. Without them, the spec has holes in request/response schemas for many endpoints.
+
+#### ISSUE L6: External/framework types unresolved — **expected/acceptable**
+
+`UploadFile`, `FileResponse`, `ChatCompletion`, `RequestBody`, `OpenAPISchema`, `SwaggerUI`, `ReDoc`, `OpenAITool` — these are framework types from FastAPI, OpenAI SDK, etc. They can't be resolved from the source code.
+
+**Category:** Expected behavior. The system correctly marks these as unresolved with `x-unresolved: true`. A pentester can see these are placeholder schemas.
+
+**Impact:** Low — acceptable gaps.
+
+#### ISSUE L7: Pydantic `ge` constraint in output — **LLM/prompt issue**
+
+Same as dograh D2. At least one schema has `ge:` instead of `minimum:`.
+
+**Category:** LLM/prompt (same root cause as D2).
+
+#### ISSUE L8: `ManagerConfigSchemaUnion` vs `ManagerConfigUnion` — schema name variants — **LLM issue**
+
+The output has both `ManagerConfigSchemaUnion` (from schema extractor) and `ManagerConfigUnion` (from assembler oneOf synthesis). These are likely the same type under different names. The LLM extracted it with a "Schema" suffix that doesn't match the source code name.
+
+**Category:** LLM/prompt. The schema extractor invented a name variant. Infrastructure doesn't normalize schema names, so duplicates appear.
+
+**Impact:** Low — both exist and both have the right subtypes.
+
+---
+
+# Polymorphism Test Summary
+
+## What works
+
+| Feature | Status | Evidence |
+|---------|--------|----------|
+| Ctags inheritance detection | **Working** | ModelSettingsUnion (13 subtypes), ManagerConfigUnion (5 subtypes) correctly assembled as oneOf |
+| Discriminator synthesis | **Partial** | ModelSettingsUnion got discriminator; ManagerConfigUnion did not |
+| Multi-round schema resolution | **Working** | Letta resolved 414 schemas across 3 rounds |
+| Large codebase handling | **Working** | 270 endpoints, 438 schemas from letta (37 route files) |
+
+## What doesn't work
+
+| Issue | Category | Severity | Repos Affected |
+|-------|----------|----------|---------------|
+| Scout misses route files | LLM/prompt | Critical | dograh (8/24 found) |
+| Pydantic discriminated unions (`Annotated[Union[...]]`) not detected | Infra/gap | High | dograh, letta |
+| Union/List/Dict type names as schema names | Infra/parsing | High | dograh, letta |
+| Builtin types (`str`, `int`, `Dict`) treated as schema refs | Infra/parsing | Medium | dograh, letta |
+| Duplicate schema extractions | Infra/bug | Medium | dograh (2.4x), letta (2.3x) |
+| Pydantic `ge`/`le` instead of `minimum`/`maximum` | LLM/prompt | Medium | dograh, letta |
+| Inconsistent discriminator detection | Infra/bug | Medium | letta |
+| Schema name variants (e.g. added "Schema" suffix) | LLM/prompt | Low | letta |
+
+## Key architectural gap: Pydantic discriminated unions
+
+The ctags inheritance feature detects class hierarchy polymorphism (`class Child(Parent)`) but **not** Pydantic discriminated unions declared as:
+
+```python
+MyUnion = Annotated[Union[TypeA, TypeB, TypeC], Field(discriminator="kind")]
+```
+
+This is the dominant polymorphism pattern in modern Python/FastAPI codebases. The subtypes inherit from `BaseModel` (not from each other), so ctags sees them as siblings, not as part of a union. The `Union[...]` type alias is a runtime construct invisible to ctags.
+
+**Possible approaches (not implemented):**
+1. **LLM-side:** Teach the schema extractor to recognize `Union[...]` with `discriminator` and emit it as a structured oneOf in the schema descriptor.
+2. **Infra-side:** Parse `Union[...]` ref_hints by decomposing them into individual types, resolving each, and synthesizing oneOf in the assembler.
+3. **Hybrid:** The ref resolver could grep for `Union[` patterns in resolved model files and auto-discover union declarations.

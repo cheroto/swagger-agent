@@ -258,11 +258,51 @@ def _parse_ref_hint(name: str) -> tuple[bool, str]:
     Returns (is_array, inner_type_name).
     """
     name = _sanitize_ref_hint(name)
+    # Strip Optional wrapper first
+    m = re.match(r"^Optional\[(.+)\]$", name)
+    if m:
+        name = m.group(1).strip()
     m = _ARRAY_PATTERN.match(name)
     if m:
         inner = next(g for g in m.groups() if g is not None)
         return True, inner.strip()
     return False, name
+
+
+# Regex for Union[A, B, C] patterns (including nested generics)
+_UNION_RE = re.compile(r"^Union\[(.+)\]$")
+
+
+def _parse_union_ref_hint(name: str) -> list[str] | None:
+    """Detect Union[A, B, C] patterns and return individual type names.
+
+    Returns None if not a Union, otherwise a list of inner type names.
+    """
+    name = _sanitize_ref_hint(name)
+    m = _UNION_RE.match(name)
+    if not m:
+        return None
+    # Split on commas respecting nested brackets
+    inner = m.group(1)
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in inner:
+        if ch in ("[", "<"):
+            depth += 1
+            current.append(ch)
+        elif ch in ("]", ">"):
+            depth -= 1
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    remainder = "".join(current).strip()
+    if remainder:
+        parts.append(remainder)
+    return [p for p in parts if p]
 
 
 def _extract_refs_from_schema(schema: dict) -> set[str]:
@@ -292,6 +332,12 @@ _EMPTY_REF_PLACEHOLDER = {
 
 
 def _build_ref(name: str) -> dict:
+    # Check for Union[A, B, C] → oneOf
+    union_parts = _parse_union_ref_hint(name)
+    if union_parts:
+        return {
+            "oneOf": [_build_ref(part) for part in union_parts],
+        }
     is_array, inner = _parse_ref_hint(name)
     if not inner:
         return dict(_EMPTY_REF_PLACEHOLDER)
@@ -460,6 +506,59 @@ def _fix_non_schema_properties(obj: object) -> None:
     elif isinstance(obj, list):
         for item in obj:
             _fix_non_schema_properties(item)
+
+
+# ── Constraint normalization ──────────────────────────────────────────────
+#
+# LLMs read framework-specific constraint syntax and sometimes output the
+# framework's naming instead of JSON Schema keywords. This is a closed set —
+# JSON Schema has ~12 validation keywords, and frameworks alias them under
+# predictable names. The mapping is language-agnostic.
+#
+# Covers: Pydantic (ge/le/gt/lt/min_length/max_length),
+#         snake_case variants from any framework,
+#         abbreviated forms the LLM might invent.
+
+_CONSTRAINT_RENAMES: dict[str, str] = {
+    # Numeric constraints
+    "ge": "minimum",
+    "le": "maximum",
+    "gt": "exclusiveMinimum",
+    "lt": "exclusiveMaximum",
+    "multiple_of": "multipleOf",
+    # String constraints
+    "min_length": "minLength",
+    "max_length": "maxLength",
+    "minlength": "minLength",
+    "maxlength": "maxLength",
+    # Array constraints
+    "min_items": "minItems",
+    "max_items": "maxItems",
+    "minitems": "minItems",
+    "maxitems": "maxItems",
+    "unique_items": "uniqueItems",
+    # Object constraints
+    "min_properties": "minProperties",
+    "max_properties": "maxProperties",
+}
+
+
+def _normalize_constraints(obj: object) -> None:
+    """Rename non-standard constraint keywords to JSON Schema equivalents.
+
+    Walks all schema dicts and renames keys like ge→minimum, le→maximum,
+    min_length→minLength, etc. Language-agnostic — covers any framework
+    whose constraint names map to standard JSON Schema validation keywords.
+    """
+    if isinstance(obj, dict):
+        for old_key, new_key in _CONSTRAINT_RENAMES.items():
+            if old_key in obj and new_key not in obj:
+                obj[new_key] = obj.pop(old_key)
+        for v in obj.values():
+            _normalize_constraints(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _normalize_constraints(item)
 
 
 def _strip_empty_required(obj: object) -> None:
@@ -735,23 +834,78 @@ def _synthesize_polymorphism(spec: dict, inheritance_map: dict) -> None:
             {"$ref": f"{prefix}{child}"} for child in sorted(present_children)
         ]
 
-        # Try to detect a discriminator property: a property whose enum values
-        # correspond to the subtype names (case-insensitive).
+        # Try to detect a discriminator property. Two strategies:
+        #
+        # Strategy 1: Parent has an enum property whose values match child names.
+        # E.g. PaymentMethod.type has enum ["CreditCard", "BankTransfer"].
+        #
+        # Strategy 2: All children share a property with distinct constant values
+        # (single-value enum or const). E.g. each Manager subtype has
+        # manager_type: Literal["round_robin"], manager_type: Literal["supervisor"].
+        # This catches cases where the parent doesn't have enum values but the
+        # children do.
+        discriminator_found = False
         props = parent_schema.get("properties", {})
         child_names_lower = {c.lower() for c in present_children}
+
+        # Strategy 1: parent enum
         for prop_name, prop_schema in props.items():
             if isinstance(prop_schema, dict) and "enum" in prop_schema:
                 enum_vals = prop_schema["enum"]
                 if isinstance(enum_vals, list):
                     enum_lower = {str(v).lower() for v in enum_vals}
-                    # If enum values are a superset of child names, likely discriminator
                     if child_names_lower <= enum_lower:
                         parent_schema["discriminator"] = {
                             "propertyName": prop_name,
                         }
                         logger.info(
-                            "Synthesized discriminator for %s: propertyName=%s",
+                            "Synthesized discriminator for %s: propertyName=%s (parent enum)",
                             parent_name, prop_name,
+                        )
+                        discriminator_found = True
+                        break
+
+        # Strategy 2: children share a property with distinct constant values
+        if not discriminator_found and len(present_children) >= 2:
+            # Collect all property names that appear in every child
+            child_schemas = [schemas.get(c, {}) for c in present_children]
+            child_prop_sets = [
+                set(cs.get("properties", {}).keys()) for cs in child_schemas
+            ]
+            if child_prop_sets:
+                shared_props = child_prop_sets[0]
+                for ps in child_prop_sets[1:]:
+                    shared_props &= ps
+
+                for prop_name in shared_props:
+                    # Check if each child has a single-value enum or const for this prop
+                    child_values: list[str] = []
+                    all_constant = True
+                    for cs in child_schemas:
+                        cp = cs.get("properties", {}).get(prop_name, {})
+                        if isinstance(cp, dict):
+                            enum_vals = cp.get("enum", [])
+                            const_val = cp.get("const")
+                            if const_val is not None:
+                                child_values.append(str(const_val))
+                            elif isinstance(enum_vals, list) and len(enum_vals) == 1:
+                                child_values.append(str(enum_vals[0]))
+                            else:
+                                all_constant = False
+                                break
+                        else:
+                            all_constant = False
+                            break
+
+                    # All children have distinct constant values → discriminator
+                    if all_constant and len(set(child_values)) == len(present_children):
+                        parent_schema["discriminator"] = {
+                            "propertyName": prop_name,
+                        }
+                        logger.info(
+                            "Synthesized discriminator for %s: propertyName=%s "
+                            "(children constants: %s)",
+                            parent_name, prop_name, child_values,
                         )
                         break
 
@@ -821,14 +975,20 @@ def assemble_spec(
 
             spec["paths"][path_key][method] = _build_operation(ep)
 
-            # Track referenced schema names (unwrap array wrappers, skip empty)
-            if ep.request_body and ep.request_body.schema_ref:
-                _, inner = _parse_ref_hint(ep.request_body.schema_ref.ref_hint)
-                if inner:
-                    referenced_schemas.add(inner)
-            for resp in ep.responses:
-                if resp.schema_ref:
-                    _, inner = _parse_ref_hint(resp.schema_ref.ref_hint)
+            # Track referenced schema names (unwrap array/union wrappers, skip empty)
+            for ref_source in (
+                [ep.request_body.schema_ref] if ep.request_body and ep.request_body.schema_ref else []
+            ) + [resp.schema_ref for resp in ep.responses if resp.schema_ref]:
+                hint_name = ref_source.ref_hint
+                # Union → collect each inner type
+                union_parts = _parse_union_ref_hint(hint_name)
+                if union_parts:
+                    for part in union_parts:
+                        _, inner = _parse_ref_hint(part)
+                        if inner:
+                            referenced_schemas.add(inner)
+                else:
+                    _, inner = _parse_ref_hint(hint_name)
                     if inner:
                         referenced_schemas.add(inner)
 
@@ -891,6 +1051,9 @@ def assemble_spec(
     # 0b. Fix string values that should be dicts (LLM sometimes outputs JSON strings)
     if spec.get("components", {}).get("schemas"):
         _scrub_string_schemas(spec["components"]["schemas"])
+    # 0c. Normalize constraint keywords (ge→minimum, le→maximum, etc.)
+    if spec.get("components", {}).get("schemas"):
+        _normalize_constraints(spec["components"]["schemas"])
     # 1. Fix $ref + sibling keys (must come before cycle detection)
     if spec.get("components", {}).get("schemas"):
         _fix_ref_siblings(spec["components"]["schemas"])

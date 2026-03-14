@@ -379,3 +379,7 @@ What this means in practice:
 - **The Scout identifies the framework for the LLM's benefit, not for infrastructure branching.** The framework name flows into prompts so the LLM knows what it's reading. Infrastructure code must never branch on it.
 
 When evaluating any proposed solution, ask: "Does this work on a codebase I've never seen, in a framework I've never heard of?" If not, redesign it.
+
+## LLM Cache
+
+The `--cache` flag stores LLM responses in `.cache/llm/` keyed by a SHA-256 hash of (model, temperature, endpoint, full prompt content). Cache entries auto-invalidate when any input changes since the hash changes — including prompt changes, schema model changes, or config changes. **Never clear the cache unless the user explicitly asks for it.** There is no scenario where proactive cache clearing is justified — the hash-based design handles invalidation automatically.
