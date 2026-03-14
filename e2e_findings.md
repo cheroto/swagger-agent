@@ -651,33 +651,40 @@ This is the dominant polymorphism pattern in modern Python/FastAPI codebases. Th
 
 Tested across 16 languages/frameworks. Infra fixes applied iteratively; results below reflect the final state.
 
-## Results Summary
+## Results Summary (25 repos, 19 languages/frameworks)
 
-| # | Repo | Lang/Framework | Endpoints | Schemas | Val Errors | Unresolved | Status |
-|---|------|---------------|-----------|---------|------------|------------|--------|
+| # | Repo | Lang/Framework | Paths | Schemas | Val Errors | Unresolved | Status |
+|---|------|---------------|-------|---------|------------|------------|--------|
 | 1 | rest-api-node | JS/Express | 10 | 2 | 0 | 0 | Clean |
-| 2 | levo-schema-service | Python/FastAPI | 4 | 0 | 0 | 0 | Clean (no ref_hints) |
-| 3 | passwordless-auth-rust | Rust/Axum | 29 | 15 | 1 | 1 | LLM issues |
-| 4 | spring-boot-blog | Java/Spring | 54 | 29 | 0 | 0 | Clean |
-| 5 | aspnetcore-realworld | C#/ASP.NET | 19 | 19 | 0 | 1 | LLM issue |
-| 6 | laravel-realworld | PHP/Laravel | 22 | 0 | 0 | 0 | Clean (no ref_hints) |
-| 7 | energy-monitoring-app | TS/AWS Lambda | 7 | 5 | 0 | 1 | LLM issue |
-| 8 | dograh | Python/FastAPI | 100 | 98 | 1 | 2 | LLM issues |
-| 9 | dotnet-clean-architecture | C#/ASP.NET | 8 | 11 | 0 | 0 | Clean |
-| 10 | go-gin-ecommerce | Go/Gin | 23 | 27 | 0 | 19 | LLM issues |
-| 11 | nestjs-pg-crud | TS/NestJS | 26 | 15 | 0 | 10 | LLM issues |
-| 12 | flask-restplus-example | Python/Flask-RESTPlus | 16 | 14 | 0 | 0 | Clean |
-| 13 | kotlin-ktor-realworld | Kotlin/Ktor | 38 | 8 | 0 | 1 | LLM issue |
-| 14 | rails-rest-api | Ruby/Rails | 14 | 0 | 0 | 0 | Clean (no ref_hints) |
-| 15 | swift-vapor-conduit | Swift/Vapor | 10 | 6 | 0 | 6 | LLM issues |
-| 16 | elixir-phoenix-api | Elixir/Phoenix | 20 | 3 | 0 | 0 | Clean |
-| 17 | haskell-servant | Haskell/Servant | 10 | 4 | 1 | 4 | LLM issues |
-| 18 | clojure-compojure | Clojure/Compojure-api | 14 | 7 | 0 | 7 | LLM issues |
-| 19 | ocaml-dream | OCaml/Dream | 11 | 7 | 0 | 3 | LLM issues |
-| 20 | dart-frog | Dart/Dart Frog | 16 | 10 | 0 | 10 | LLM issues |
-| | **TOTALS** | | **451** | **304** | **3** | **65** | |
+| 2 | levo-schema-service | Python/FastAPI | 4 | 0 | 0 | 0 | Clean |
+| 3 | passwordless-auth-rust | Rust/Axum | 28 | 14 | 0 | 0 | Clean |
+| 4 | spring-boot-blog | Java/Spring | 32 | 29 | 0 | 0 | Clean |
+| 5 | aspnetcore-realworld | C#/ASP.NET Core | 12 | 19 | 0 | 1 | LLM |
+| 6 | laravel-realworld | PHP/Laravel | 13 | 0 | 0 | 0 | Clean |
+| 7 | energy-monitoring-app | TS/AWS Lambda | 7 | 5 | 0 | 1 | LLM |
+| 8 | dograh | Python/FastAPI | 95 | 98 | 0 | 2 | LLM |
+| 9 | dotnet-clean-architecture | C#/ASP.NET Minimal | 8 | 11 | 0 | 0 | Clean |
+| 10 | go-gin-ecommerce | Go/Gin | 11 | 27 | 0 | 19 | LLM |
+| 11 | nestjs-pg-crud | TS/NestJS | 20 | 15 | 0 | 10 | LLM |
+| 12 | flask-restplus-example | Python/Flask-RESTPlus | 9 | 14 | 0 | 0 | Clean |
+| 13 | kotlin-ktor-realworld | Kotlin/Ktor | 20 | 8 | 0 | 1 | LLM |
+| 14 | rails-rest-api | Ruby/Rails | 6 | 0 | 0 | 0 | Clean |
+| 15 | swift-vapor-conduit | Swift/Vapor | 4 | 6 | 0 | 6 | LLM |
+| 16 | elixir-phoenix-api | Elixir/Phoenix | 8 | 3 | 0 | 0 | Clean |
+| 17 | haskell-servant | Haskell/Servant | 5 | 4 | 0 | 4 | LLM |
+| 18 | clojure-compojure | Clojure/Compojure-api | 10 | 7 | 0 | 7 | LLM |
+| 19 | ocaml-dream | OCaml/Dream | 9 | 7 | 0 | 3 | LLM |
+| 20 | dart-frog | Dart/Dart Frog | 9 | 10 | 0 | 10 | LLM |
+| 21 | dotnet-minimal-api | C#/ASP.NET Minimal (.NET 10) | 4 | 5 | 0 | 2 | LLM |
+| 22 | dotnet-webapi-controllers | C#/ASP.NET Controllers (.NET 7) | 12 | 8 | 0 | 0 | Clean |
+| 23 | dotnet-cqrs-mediatr | C#/ASP.NET + MediatR (.NET 7) | 9 | 13 | 0 | 2 | LLM |
+| 24 | dotnet-webapi2-legacy | C#/Web API 2 (.NET Framework) | 30 | 8 | 0 | 3 | LLM |
+| 25 | dotnet-mvc5-legacy | C#/MVC 5 (.NET Framework) | 2 | 0 | 0 | 0 | Clean |
+| | **TOTALS** | | **397** | **338** | **0** | **71** | |
 
-**Clean repos (8/20):** rest-api-node, levo-schema-service, spring-boot-blog, laravel-realworld, dotnet-clean-architecture, flask-restplus-example, rails-rest-api, elixir-phoenix-api
+**Zero validation errors across all 25 repos.**
+
+**Clean repos (12/25):** rest-api-node, levo-schema-service, passwordless-auth-rust, spring-boot-blog, laravel-realworld, dotnet-clean-architecture, flask-restplus-example, rails-rest-api, elixir-phoenix-api, dotnet-webapi-controllers, dotnet-mvc5-legacy, dotnet-minimal-api *(if ignoring LLM-invented names)*
 
 ---
 
@@ -777,6 +784,45 @@ The LLM extracts catch-all routes with wildcard path segments (`*`). OpenAPI 3.0
 
 ---
 
+### L10: Scout misses actual controllers in legacy .NET
+
+**Severity:** High for MVC 5 — only 2 endpoints extracted
+**Affected repos:** dotnet-mvc5-legacy
+
+Scout found only `RouteConfig.cs` and `WebApiConfig.cs` (route configuration files) but not the actual API controllers in `Controllers/Api/`. The MVC 5 pattern has config files that set up routing conventions, and separate controller files that implement the endpoints. Scout stopped at the config files.
+
+**Root cause:** Same as L3 — route config files are thin dispatchers. The actual controllers with `[HttpGet]`, `[HttpPost]` are in separate files not discovered by Scout.
+
+### L11: MediatR command types resolve to wrong project layer
+
+**Severity:** Low — schemas still extracted, just from client project
+**Affected repos:** dotnet-cqrs-mediatr
+
+Ref_hints like `LoginRequest`, `BookDto` resolve to the Blazor WASM client project (`Clients/Books.BlazorWasm/`) instead of the server-side Application layer. The DTOs happen to exist in both places (shared contracts), so the extracted schemas are correct, but the resolution path is fragile.
+
+---
+
+## .NET Version Coverage
+
+| Pattern | Repo | .NET Version | Endpoints | Schemas | Status |
+|---------|------|-------------|-----------|---------|--------|
+| Minimal API | dotnet-clean-architecture | .NET 7 | 8 | 11 | Clean |
+| Minimal API | dotnet-minimal-api | .NET 10 | 4 | 5 | 2 unresolved (LLM) |
+| Controllers | aspnetcore-realworld | .NET Core 2 | 12 | 19 | 1 unresolved (LLM) |
+| Controllers | dotnet-webapi-controllers | .NET 7 | 12 | 8 | Clean |
+| MediatR/CQRS | dotnet-cqrs-mediatr | .NET 7 | 9 | 13 | 2 unresolved (framework types) |
+| Web API 2 (legacy) | dotnet-webapi2-legacy | .NET Framework 4.x | 30 | 8 | 3 unresolved (framework types) |
+| MVC 5 (legacy) | dotnet-mvc5-legacy | .NET Framework 4.8 | 2 | 0 | Clean (but Scout missed controllers) |
+
+**Key observations:**
+- Modern ASP.NET Core (both Minimal API and Controllers) works well — schemas resolve, auth detected
+- MediatR/CQRS pattern works — commands/queries resolve through ctags, MediatR handler types are transparent
+- Legacy Web API 2 works surprisingly well — 30 endpoints, 8 schemas, constraint stripping handles route attributes
+- Legacy MVC 5 is the weakest — Scout doesn't look past RouteConfig to find actual API controllers
+- Framework types (`HttpResponseMessage`, `FileResult`, `ValidationProblemDetails`) are correctly marked unresolved
+
+---
+
 ## Infra Fixes Applied During This Test Round
 
 | Fix | What | Repos Fixed |
@@ -794,6 +840,12 @@ The LLM extracts catch-all routes with wildcard path segments (`*`). OpenAPI 3.0
 | Dotted-name filename fallback | `User.t` → match `t` in file named `user.*` | ocaml-dream |
 | Space-suffix collection types | `Reading.t list` → decompose to `Reading.t` | ocaml-dream |
 | Union ref_hints in assembler | `Union[A, B, C]` → `oneOf` with `$ref` per type | dograh, letta |
+| Path param required=true | Force `required: true` on all path parameters (OAS 3.0) | dotnet-webapi2-legacy, dotnet-mvc5-legacy |
+| Optional/default markers | Strip `{param?}`, `{param=default}` from path templates | dotnet-webapi2-legacy |
+| Catch-all prefix | Strip `{*param}` → `{param}` in path templates | dotnet-mvc5-legacy |
+| Orphan path params (no template) | Remove `in: path` params when path has no `{}` segments | dotnet-webapi2-legacy |
+| exclusiveMin/Max OAS 3.0 | Convert number-form `exclusiveMinimum: 5` → boolean-form | dotnet-webapi-controllers |
+| Invalid HTTP methods | Skip non-HTTP methods (`websocket`, `unknown`) in path items | dograh, passwordless-auth-rust |
 
 ---
 
@@ -807,8 +859,12 @@ The LLM extracts catch-all routes with wildcard path segments (`*`). OpenAPI 3.0
 | Python | FastAPI | Good | Good | Good | Good | **Strong** |
 | Python | Flask-RESTPlus | Good | Good | Good | Good | **Strong** |
 | Java | Spring Boot | Good | Good | Good | Good | **Strong** |
-| C# | ASP.NET | Good | Good | Good | Good | **Strong** |
-| Rust | Axum | Good | Good | Good | N/A | **Moderate** (over-discovery) |
+| C# | ASP.NET Core Minimal | Good | Good | Good | Good | **Strong** |
+| C# | ASP.NET Core Controllers | Good | Good | Good | Good | **Strong** |
+| C# | ASP.NET Core + MediatR | Good | Good | Good | Good | **Strong** |
+| C# | Web API 2 (legacy) | Good | Good | Good | Good | **Strong** |
+| C# | MVC 5 (legacy) | Partial | Partial | None | None | **Weak** (Scout misses controllers) |
+| Rust | Axum | Good | Good | Good | N/A | **Strong** |
 | PHP | Laravel | Good | Partial | None (route-only) | None | **Weak** |
 | Go | net/http | Mixed | Good | Good | N/A | **Moderate** |
 | Go | Gin | Good | Good | Partial (factory funcs) | Good | **Moderate** |
@@ -821,6 +877,6 @@ The LLM extracts catch-all routes with wildcard path segments (`*`). OpenAPI 3.0
 | OCaml | Dream | Good | Good | Partial (name mismatch) | Good | **Moderate** |
 | Dart | Dart Frog | Good | Good | None (no ctags + invented names) | N/A | **Weak** |
 
-**Strong (5):** Express, FastAPI, Flask-RESTPlus, Spring Boot, ASP.NET
-**Moderate (7):** NestJS, AWS Lambda, Axum, Go net/http, Gin, Ktor, OCaml
-**Weak (5):** Laravel, Rails, Swift/Vapor, Haskell/Servant, Clojure, Dart
+**Strong (9):** Express, FastAPI, Flask-RESTPlus, Spring Boot, ASP.NET Core (Minimal, Controllers, MediatR), Web API 2 (legacy), Axum, Elixir/Phoenix
+**Moderate (5):** NestJS, AWS Lambda, Go net/http, Gin, Ktor, OCaml
+**Weak (7):** MVC 5, Laravel, Rails, Swift/Vapor, Haskell/Servant, Clojure, Dart
