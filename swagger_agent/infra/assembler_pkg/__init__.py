@@ -12,6 +12,7 @@ __all__ = [
     "_break_ref_cycles", "_coerce_to_schema", "_deduplicate_operation_ids",
     "_extract_refs_from_schema", "_fix_ref_siblings", "_normalize_schema_case",
     "_sanitize_schemas", "_synthesize_polymorphism",
+    "_fix_leaked_ref_hints",
     "inline_primitive_refs", "primitive_schema",
     "_fix_non_schema_properties",
 ]
@@ -39,6 +40,7 @@ from .schema_fixups import (  # noqa: F401
     _extract_refs_from_schema,
     _fix_ref_siblings,
     _normalize_schema_case,
+    _fix_leaked_ref_hints,
     _sanitize_schemas,
     _synthesize_polymorphism,
     inline_primitive_refs,

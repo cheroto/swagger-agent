@@ -275,6 +275,19 @@ def resolve_from_ctags(
                         if fragment in str(entry.path):
                             return entry.path
             return scoped[0].path
+        # No scoped entries — try matching by filename.
+        # E.g. "User.t" → find "t" entries in files named "user.*"
+        if not scoped and leaf_entries:
+            parent_lower = parent.lower()
+            by_filename = [
+                e for e in leaf_entries
+                if e.path.stem.lower() == parent_lower
+            ]
+            if len(by_filename) == 1:
+                return by_filename[0].path
+            if len(by_filename) > 1:
+                # Prefer .ml over .mli, .ts over .d.ts, etc. (source over interface)
+                return by_filename[0].path
         # Fall through to try the full dotted name as-is
 
     entries = ctags_index.get(name)

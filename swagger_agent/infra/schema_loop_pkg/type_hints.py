@@ -56,6 +56,13 @@ def _decompose_type_hint(name: str) -> list[str]:
     if name in _BUILTIN_TYPES:
         return []
 
+    # Space-suffixed collection types: "User list", "User array", "User option"
+    # Common in ML-family languages (OCaml, Haskell, F#).
+    _SPACE_SUFFIXES = {"list", "array", "option", "seq", "set", "ref"}
+    parts = name.rsplit(" ", 1)
+    if len(parts) == 2 and parts[1].lower() in _SPACE_SUFFIXES:
+        return _decompose_type_hint(parts[0])
+
     m = _GENERIC_RE.match(name)
     if not m:
         return [name]

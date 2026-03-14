@@ -56,6 +56,29 @@ def primitive_schema(name: str) -> dict | None:
     return None
 
 
+def _fix_leaked_ref_hints(obj: object) -> None:
+    """Convert raw RefHint dicts that leaked into schema positions to $refs.
+
+    When the LLM puts a RefHint object (with keys like ref_hint, resolution,
+    import_line) as a parameter schema instead of a proper JSON Schema, this
+    converts it to a valid $ref.
+    """
+    if isinstance(obj, dict):
+        # Check if this dict looks like a RefHint (has ref_hint key, no type key)
+        if "ref_hint" in obj and "type" not in obj and "$ref" not in obj:
+            hint_name = obj["ref_hint"]
+            # Clear all ref_hint keys and replace with $ref
+            for key in list(obj.keys()):
+                del obj[key]
+            obj["$ref"] = f"#/components/schemas/{hint_name}"
+            return
+        for v in obj.values():
+            _fix_leaked_ref_hints(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            _fix_leaked_ref_hints(item)
+
+
 def inline_primitive_refs(obj: object) -> None:
     """Replace $ref to primitive types with inline JSON Schema.
 

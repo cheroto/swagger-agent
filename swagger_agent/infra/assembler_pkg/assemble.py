@@ -15,6 +15,7 @@ from .schema_fixups import (
     _break_ref_cycles,
     _deduplicate_operation_ids,
     _extract_refs_from_schema,
+    _fix_leaked_ref_hints,
     _fix_ref_siblings,
     _normalize_schema_case,
     _sanitize_schemas,
@@ -277,6 +278,8 @@ def assemble_spec(
                 }
 
     # Post-processing
+    # Fix leaked RefHint dicts in parameter schemas (convert to $ref)
+    _fix_leaked_ref_hints(spec)
     # Inline primitive $refs across the entire spec (paths + schemas)
     inline_primitive_refs(spec)
     schemas_dict = spec.get("components", {}).get("schemas")
