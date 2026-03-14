@@ -49,6 +49,28 @@ def _detect_duplicate_paths(paths: dict, result: ValidationResult) -> None:
             )
 
 
+def _collect_all_ref_targets(spec: dict) -> set[str]:
+    """Walk the entire spec and collect all schema names referenced via $ref."""
+    targets: set[str] = set()
+    prefix = "#/components/schemas/"
+
+    def _walk(obj):
+        if isinstance(obj, dict):
+            ref = obj.get("$ref", "")
+            if isinstance(ref, str) and ref.startswith(prefix):
+                targets.add(ref[len(prefix):])
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+
+    # Walk paths and schemas (schemas can reference other schemas)
+    _walk(spec.get("paths", {}))
+    _walk(spec.get("components", {}).get("schemas", {}))
+    return targets
+
+
 def validate_spec(spec: dict) -> ValidationResult:
     """Validate an OpenAPI 3.0 spec using openapi-spec-validator plus custom checks.
 
@@ -76,6 +98,13 @@ def validate_spec(spec: dict) -> ValidationResult:
     for name, schema in schemas.items():
         if schema.get("x-unresolved"):
             result.warnings.append(f"Unresolved schema: {name}")
+
+    # Unused schemas: defined in components/schemas but never referenced via $ref
+    if schemas:
+        referenced = _collect_all_ref_targets(spec)
+        for name in schemas:
+            if name not in referenced:
+                result.warnings.append(f"Unused schema: {name}")
 
     # Detect potential duplicate paths (variants like /request/magic vs /request-magic)
     _detect_duplicate_paths(paths, result)
