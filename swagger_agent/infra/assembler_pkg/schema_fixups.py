@@ -39,8 +39,21 @@ _PRIMITIVE_TYPE_MAP: dict[str, dict] = {
 
 
 def primitive_schema(name: str) -> dict | None:
-    """Return an inline JSON Schema for a primitive type name, or None."""
-    return _PRIMITIVE_TYPE_MAP.get(name.lower())
+    """Return an inline JSON Schema for a primitive type name, or None.
+
+    Also handles comma-separated builtins like "str, Any" — if all parts
+    are primitives, returns a generic object schema.
+    """
+    result = _PRIMITIVE_TYPE_MAP.get(name.lower())
+    if result is not None:
+        return result
+    # Handle comma-separated type args that leaked as schema names
+    # e.g. "str, Any" from Dict[str, Any] when the LLM emits it as a $ref
+    if ", " in name:
+        parts = [p.strip() for p in name.split(",")]
+        if all(p.lower() in _PRIMITIVE_TYPE_MAP for p in parts):
+            return {"type": "object"}
+    return None
 
 
 def inline_primitive_refs(obj: object) -> None:
