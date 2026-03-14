@@ -34,10 +34,11 @@ class CtagsEntry:
     inherits: str | None = None  # comma-separated parent types (e.g. "BaseModel", "PaymentMethod,ISerializable")
 
 
-# Kinds that represent type definitions worth resolving
+# Kinds that represent type definitions worth resolving.
+# Includes "module" for languages where modules define types (Elixir, Ruby, etc.)
 _RELEVANT_KINDS = frozenset({
     "class", "interface", "struct", "enum", "type", "alias",
-    "record", "trait", "model",
+    "record", "trait", "model", "module",
 })
 
 # Directories to exclude from ctags and grep
