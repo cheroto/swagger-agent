@@ -18,6 +18,8 @@ _JSON_SCHEMA_TYPES = frozenset({
 # Map well-known type names (from any language) to inline JSON Schema types.
 # When a $ref targets one of these, we inline the type instead of creating
 # an unresolved placeholder. Case-insensitive lookup.
+_OPAQUE = {"type": "object"}
+
 _PRIMITIVE_TYPE_MAP: dict[str, dict] = {
     "string": {"type": "string"}, "str": {"type": "string"},
     "integer": {"type": "integer"}, "int": {"type": "integer"},
@@ -26,8 +28,7 @@ _PRIMITIVE_TYPE_MAP: dict[str, dict] = {
     "double": {"type": "number", "format": "double"},
     "number": {"type": "number"},
     "boolean": {"type": "boolean"}, "bool": {"type": "boolean"},
-    "object": {"type": "object"}, "dict": {"type": "object"},
-    "map": {"type": "object"}, "any": {},
+    "object": _OPAQUE, "dict": _OPAQUE, "map": _OPAQUE, "any": {},
     "void": {"type": "object", "description": "void"},
     "date": {"type": "string", "format": "date"},
     "datetime": {"type": "string", "format": "date-time"},
@@ -35,6 +36,22 @@ _PRIMITIVE_TYPE_MAP: dict[str, dict] = {
     "uri": {"type": "string", "format": "uri"},
     "byte": {"type": "string", "format": "byte"},
     "binary": {"type": "string", "format": "binary"},
+    # Framework HTTP/response infrastructure types — no user-defined schema.
+    # These are inlined as {type: "object"} instead of creating unresolvable $refs.
+    "iactionresult": _OPAQUE, "actionresult": _OPAQUE,
+    "ihttpactionresult": _OPAQUE,
+    "httpresponsemessage": _OPAQUE, "httpresponse": _OPAQUE,
+    "httprequestmessage": _OPAQUE,
+    "iformfile": _OPAQUE, "formfile": _OPAQUE,
+    "cancellationtoken": _OPAQUE,
+    "healthcheckresult": _OPAQUE,
+    "fileresult": _OPAQUE, "jsonresult": _OPAQUE,
+    "viewresult": _OPAQUE, "contentresult": _OPAQUE,
+    "statuscoderesult": _OPAQUE, "objectresult": _OPAQUE,
+    "responseentity": _OPAQUE,
+    "httpservletrequest": _OPAQUE, "httpservletresponse": _OPAQUE,
+    "modelandview": _OPAQUE, "redirectview": _OPAQUE,
+    "validationproblemdetails": _OPAQUE, "problemdetails": _OPAQUE,
 }
 
 

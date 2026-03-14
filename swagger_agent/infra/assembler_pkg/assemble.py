@@ -35,14 +35,16 @@ class AssemblyResult:
 
 # ── Ref hint parsing ─────────────────────────────────────────────────────
 
-_ARRAY_PATTERN = re.compile(
+# Bracket-only array patterns (no named generics — those are handled separately)
+_BRACKET_ARRAY_RE = re.compile(
     r"^(?:"
     r"\[\](.+)"           # Go:      []Type
     r"|(.+)\[\]"          # TS/Java: Type[]
-    r"|\w+\[(.+)\]"      # Generic[T]: List[T], Array[T], Sequence[T], Set[T], etc.
-    r"|\w+<(.+)>"        # Generic<T>: List<T>, Vec<T>, IEnumerable<T>, etc.
     r")$"
 )
+
+# Generic pattern: Wrapper[Inner] or Wrapper<Inner>
+_GENERIC_RE = re.compile(r"^(\w+)\s*[\[<](.+)[\]>]$")
 
 _REF_PREFIX = "#/components/schemas/"
 
@@ -64,6 +66,13 @@ def _sanitize_ref_hint(name: str) -> str:
 
 _SPACE_COLLECTION_SUFFIXES = {"list", "array", "option", "seq", "set", "ref"}
 
+_COLLECTION_WRAPPERS = frozenset({
+    "List", "list", "Array", "array", "Set", "set", "FrozenSet", "frozenset",
+    "Sequence", "sequence", "Iterable", "iterable",
+    "IEnumerable", "IList", "ICollection", "ISet",
+    "Collection", "Vec", "vector", "Deque", "deque", "Queue",
+    "HashSet", "TreeSet", "LinkedList", "ArrayList",
+})
 
 _MAP_WRAPPERS = frozenset({
     "Map", "map", "Dict", "dict", "HashMap", "hashMap",
@@ -73,25 +82,37 @@ _MAP_WRAPPERS = frozenset({
 
 
 def _parse_ref_hint(name: str) -> tuple[bool, str]:
-    """Parse a ref_hint, detecting array wrappers and map types.
+    """Parse a ref_hint, detecting array wrappers, maps, and response wrappers.
 
     Returns (is_array, inner_type_name).
-    Map/Dict types are treated as plain object (no $ref needed).
+
+    - Known collection wrappers (List<T>, IEnumerable<T>) → (True, T)
+    - Known map wrappers (Map<K,V>, Dict[K,V]) → (False, "")
+    - Unknown wrappers (ActionResult<T>, Task<T>) → (False, T)  (pass-through)
+    - Bracket syntax ([]T, T[]) → (True, T)
     """
     name = _sanitize_ref_hint(name)
     m = re.match(r"^Optional\[(.+)\]$", name)
     if m:
         name = m.group(1).strip()
 
-    # Detect Map/Dict generics BEFORE the array pattern — Map<K,V> is not an array
-    m_generic = re.match(r"^(\w+)\s*[\[<](.+)[\]>]$", name)
-    if m_generic and m_generic.group(1) in _MAP_WRAPPERS:
-        return False, ""  # empty → renders as {type: object} via _EMPTY_REF_PLACEHOLDER
-
-    m = _ARRAY_PATTERN.match(name)
+    # Bracket array syntax: []Type or Type[]
+    m = _BRACKET_ARRAY_RE.match(name)
     if m:
         inner = next(g for g in m.groups() if g is not None)
         return True, inner.strip()
+
+    # Named generic: Wrapper[Inner] or Wrapper<Inner>
+    m = _GENERIC_RE.match(name)
+    if m:
+        wrapper = m.group(1)
+        inner = m.group(2).strip()
+        if wrapper in _MAP_WRAPPERS:
+            return False, ""  # map → plain object
+        if wrapper in _COLLECTION_WRAPPERS:
+            return True, inner  # collection → array
+        # Unknown wrapper (ActionResult<T>, Task<T>, etc.) → pass-through to inner
+        return False, inner
 
     # ML-family space-suffix collections: "Reading.t list" → array of Reading.t
     parts = name.rsplit(" ", 1)
@@ -155,6 +176,8 @@ def _build_ref(name: str) -> dict:
     is_array, inner = _parse_ref_hint(name)
     if not inner:
         return dict(_EMPTY_REF_PLACEHOLDER)
+    # Primitive/framework types get inlined by inline_primitive_refs later.
+    # We still create the $ref here; the postprocessor replaces it.
     if is_array:
         return {
             "type": "array",

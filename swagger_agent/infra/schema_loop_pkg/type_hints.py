@@ -15,6 +15,7 @@ import re
 
 # Types that map directly to JSON Schema primitives — never resolve these.
 _BUILTIN_TYPES = frozenset({
+    # Language primitives
     "str", "int", "float", "bool", "bytes", "None", "NoneType",
     "dict", "list", "set", "tuple", "Any", "object",
     "string", "String", "integer", "Integer", "long", "Long",
@@ -22,15 +23,29 @@ _BUILTIN_TYPES = frozenset({
     "void", "Void", "byte", "Byte", "char", "short",
     "Object", "Map", "HashMap", "Array", "List", "Set",
     "any", "unknown", "undefined", "null", "never", "dynamic",
+    # Framework HTTP/response infrastructure — no user-defined schema
+    "IActionResult", "ActionResult", "IHttpActionResult",
+    "HttpResponseMessage", "HttpResponse", "HttpRequestMessage",
+    "IFormFile", "FormFile", "CancellationToken",
+    "HealthCheckResult", "FileResult", "JsonResult", "ViewResult",
+    "ContentResult", "StatusCodeResult", "ObjectResult",
+    "ResponseEntity", "HttpServletRequest", "HttpServletResponse",
+    "ModelAndView", "RedirectView",
+    "Request", "Response", "NextFunction",
 })
 
 # Wrappers that contain a single inner type (unwrap → resolve inner).
 _PASSTHROUGH_WRAPPERS = frozenset({
+    # Collections
     "List", "list", "Sequence", "Set", "set", "FrozenSet", "frozenset",
     "Tuple", "tuple", "Iterable", "Iterator", "Generator",
     "Optional", "Type", "ClassVar",
     "Array", "Vec", "vector", "IEnumerable", "IList", "ICollection",
     "Collection", "Deque", "deque", "Queue",
+    # Response/async wrappers — unwrap to the inner type
+    "ActionResult", "Task", "ValueTask", "ResponseEntity",
+    "Result", "IResult", "Observable", "Future", "Promise",
+    "Mono", "Flux", "Single", "Maybe", "Completable",
 })
 
 # Regex: Wrapper[InnerContent] or Wrapper<InnerContent>
