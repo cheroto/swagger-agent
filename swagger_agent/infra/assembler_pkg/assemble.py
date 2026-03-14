@@ -19,6 +19,8 @@ from .schema_fixups import (
     _normalize_schema_case,
     _sanitize_schemas,
     _synthesize_polymorphism,
+    inline_primitive_refs,
+    primitive_schema,
 )
 
 logger = logging.getLogger("swagger_agent.assembler")
@@ -254,6 +256,9 @@ def assemble_spec(
     all_needed = _collect_transitive_refs(referenced_schemas, schemas, schemas_lower)
 
     for name in all_needed:
+        # Skip primitive types — they'll be inlined by inline_primitive_refs
+        if primitive_schema(name) is not None:
+            continue
         if name in schemas:
             spec["components"]["schemas"][name] = schemas[name]
         else:
@@ -275,6 +280,7 @@ def assemble_spec(
     schemas_dict = spec.get("components", {}).get("schemas")
     if schemas_dict:
         _sanitize_schemas(schemas_dict)
+        inline_primitive_refs(schemas_dict)
         _fix_ref_siblings(schemas_dict)
     _break_ref_cycles(spec)
     _normalize_schema_case(spec)

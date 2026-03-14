@@ -15,6 +15,56 @@ _JSON_SCHEMA_TYPES = frozenset({
     "string", "integer", "number", "boolean", "array", "object",
 })
 
+# Map well-known type names (from any language) to inline JSON Schema types.
+# When a $ref targets one of these, we inline the type instead of creating
+# an unresolved placeholder. Case-insensitive lookup.
+_PRIMITIVE_TYPE_MAP: dict[str, dict] = {
+    "string": {"type": "string"}, "str": {"type": "string"},
+    "integer": {"type": "integer"}, "int": {"type": "integer"},
+    "long": {"type": "integer", "format": "int64"},
+    "float": {"type": "number", "format": "float"},
+    "double": {"type": "number", "format": "double"},
+    "number": {"type": "number"},
+    "boolean": {"type": "boolean"}, "bool": {"type": "boolean"},
+    "object": {"type": "object"}, "dict": {"type": "object"},
+    "map": {"type": "object"}, "any": {},
+    "void": {"type": "object", "description": "void"},
+    "date": {"type": "string", "format": "date"},
+    "datetime": {"type": "string", "format": "date-time"},
+    "uuid": {"type": "string", "format": "uuid"},
+    "uri": {"type": "string", "format": "uri"},
+    "byte": {"type": "string", "format": "byte"},
+    "binary": {"type": "string", "format": "binary"},
+}
+
+
+def primitive_schema(name: str) -> dict | None:
+    """Return an inline JSON Schema for a primitive type name, or None."""
+    return _PRIMITIVE_TYPE_MAP.get(name.lower())
+
+
+def inline_primitive_refs(obj: object) -> None:
+    """Replace $ref to primitive types with inline JSON Schema.
+
+    When the LLM emits $ref: '#/components/schemas/String', this replaces
+    it with {type: "string"} inline, avoiding unresolved placeholders.
+    """
+    prefix = "#/components/schemas/"
+    if isinstance(obj, dict):
+        ref = obj.get("$ref")
+        if isinstance(ref, str) and ref.startswith(prefix):
+            type_name = ref[len(prefix):]
+            inline = primitive_schema(type_name)
+            if inline is not None:
+                del obj["$ref"]
+                obj.update(inline)
+                return
+        for v in obj.values():
+            inline_primitive_refs(v)
+    elif isinstance(obj, list):
+        for item in obj:
+            inline_primitive_refs(item)
+
 _STRING_VALUE_KEYS = frozenset({
     "$ref", "type", "format", "description", "pattern",
     "title", "default", "example", "x-circular-ref",
