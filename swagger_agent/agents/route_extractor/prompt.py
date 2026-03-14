@@ -67,89 +67,17 @@ Do NOT extract full endpoint details — just identify patterns and structure.
 # ---------------------------------------------------------------------------
 
 _PHASE2_OUTPUT_FORMAT = """\
-## Path Construction
+## Strategy
 
-- Combine base_path + any router-level prefix + endpoint-level path to form the full path.
-- Keep path parameter syntax as-is from the framework (:param, {param}, <param>).
-- For serverless handlers (Lambda, Azure Functions, Cloud Functions) with no route decorators:
-  1. The parent directory name is the resource (e.g. `energy/` → `energy`).
-  2. The filename (without extension) is the action, but strip any HTTP method prefix: `get-history` → `history`, `post-upload` → `upload`, `delete-item` → `item`. If no prefix matches, use the full filename.
-  3. Path = `/{resource}/{action}`.
-  4. Infer the HTTP method from the stripped prefix (`get-` → GET, `post-` → POST, etc.). If no prefix, infer from the code (e.g. reads query params → GET, reads body → POST).
-- For route resources (e.g. Laravel `Route::resource`), expand into individual CRUD endpoints.
-
-## Parameter Extraction
-
-- For EVERY path parameter ({param}, :param, <param>) in the final path, you MUST include a Parameter with `in: "path"` and `required: true`. Count the path parameters in the URL — the number of path Parameter objects must equal the number of `{param}` / `:param` / `<param>` segments.
-- Path parameters are defined by the URL pattern — do NOT copy query parameters from other endpoints.
-- Each endpoint's parameters are independent. Do not share parameters between endpoints.
-
-## Request Body Detection
-
-- Include request_body when you see evidence of body consumption in the handler:
-  - A parameter with a body marker (e.g. [FromBody], @RequestBody, Pydantic model type, req.body usage)
-  - A parameter that is a complex/model type (not a path/query param, not CancellationToken, not primitive)
-- For POST/PUT/PATCH with unknown body shape: still include request_body with schema_ref using `type_origin: "inferred"` and `resolution: "unresolvable"`. A pentester needs to know the endpoint accepts a body even if the shape is unknown.
-- Set request_body: null ONLY for genuinely bodyless endpoints (GET, DELETE, state toggles like /complete, /activate).
-- When request_body is null on POST/PUT/PATCH, set `request_body_reason` to explain why (e.g. "state toggle", "action endpoint", "webhook callback", "no body evidence in code").
-
-## RefHint Rules
-
-For every type reference (request bodies, response schemas, parameter types):
-
-### type_origin (CRITICAL — determines whether infra attempts resolution)
-
-- `type_origin: "declared"` — this exact type name exists as a class, struct, interface, type alias, or schema definition somewhere in the codebase, OR appears in an import statement. Infrastructure WILL attempt to find and extract it.
-- `type_origin: "inferred"` — NO type with this name exists in the code. You are inventing a descriptive name for an anonymous/inline type (e.g. `{ email: string; password: string }`) or a factory function return (e.g. `map[string]interface{}`). Infrastructure will NOT attempt resolution — it will inline as `{type: "object"}`.
-
-**Decision rule:** Can you point to a line in the code that says `class X`, `struct X`, `type X`, `interface X`, or `import X`? If yes → `declared`. If no → `inferred`.
-
-### resolution (only meaningful when type_origin is "declared")
-
-1. **Type appears in the import/require/using statements:**
-   - `resolution: "import"`, `import_line`: the exact import statement
-
-2. **Type is used in the code but has NO import line** — same package/namespace/module:
-   - `resolution: "class_to_file"`, `import_line`: empty
-
-3. **Framework/language built-in types ONLY:**
-   - `resolution: "unresolvable"`
-   - STRICTLY for: built-in types (dict, object, string, int, Any), framework base types (Response, IActionResult, HttpResponse, ActionResult, Task), and generic containers with no named inner type.
-
-**IMPORTANT:** Always set `file_namespace` to the namespace/package declaration at the top of the current file. This is critical for disambiguation.
-
-When emitting ref_hint names, use the **inner type only** — strip collection wrappers. For example: `List<Article>` → ref_hint: "Article", `Vec<User>` → ref_hint: "User", `Article[]` → ref_hint: "Article".
-
-## Error Response Rules
-
-1. Auth-protected endpoints MUST include 401 (Unauthorized). Add 403 if role-based access is visible.
-2. Endpoints with typed request bodies: add 422 (Validation Error).
-3. Endpoints with path parameters: add 404 (Not Found).
-4. Look for explicit error handling (try/catch, error middleware, custom error classes).
-5. Always include the success response: POST→201, DELETE→200/204, GET/PUT/PATCH→200.
-
-## Content Type Detection
-
-- File upload fields (UploadFile, multer, MultipartFile) → multipart/form-data
-- Form data without files → application/x-www-form-urlencoded
-- Default → application/json
-
-## Operation ID
-
-- Derive from handler function name (e.g. create_user, getArticle)
-- Must be unique within the file
-- If too generic (index, handler), prefix with HTTP method and resource
-
-## Tags
-
-- Derive from route file name, router prefix, or controller class name
-- Use PascalCase (e.g. "Users", "Articles")
-
-## Important
-
-- Extract ALL endpoints. Do not skip any.
+- Combine base_path + router-level prefix + endpoint-level path. Keep the framework's path param syntax as-is.
+- For serverless handlers with no route decorators, infer path from directory/filename structure and HTTP method from filename prefix or code behavior.
+- For route resource declarations, expand into individual CRUD endpoints.
+- Every path parameter segment in the URL must have a matching Parameter object.
+- Each endpoint's parameters are independent — do not share between endpoints.
+- Extract ALL endpoints in the file. Do not skip any.
 - source_file is set by the harness — ignore it.
-- When in doubt between "class_to_file" and "unresolvable": if the type has a domain-specific name (not a language/framework built-in), use "class_to_file".
+
+All field semantics, valid values, and decision rules are defined in the schema descriptions provided by the tool definition. Follow them precisely.
 """
 
 

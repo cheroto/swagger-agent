@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 class RefHint(BaseModel):
     ref_hint: str = Field(description="Type name as it appears in code. Use the inner type only, strip collection wrappers: List<Article> → 'Article'.")
-    type_origin: Literal["declared", "inferred"] = Field(description="'declared' = this exact type name appears as a class/struct/interface/type/schema definition or in an import statement in the code. 'inferred' = no type with this name exists in the code — you are inventing a descriptive name for an anonymous/inline/implicit type (e.g. inline { email: string } or a factory function return).")
+    type_origin: Literal["declared", "inferred"] = Field(description="'declared' = the code contains a type declaration for this exact name: class X, struct X, type X, interface X, data X, defmodule X, or it is used as a type annotation (e.g. 'var x: MyType', 'param: MyType', '@RequestBody MyType'). 'inferred' = this name does NOT exist as a type declaration anywhere — you are naming something that has no type: a function/method call return (e.g. createUserDto()), an inline/anonymous shape (e.g. { email: string }), a dict/map literal, or a dynamic return with no type annotation. If the code says SomeFunc(args) and you are guessing a type name from the function name, that is ALWAYS 'inferred'.")
     import_line: str = Field(default="", description="The exact import/require/using statement that imports this type. Empty string if not imported (same-namespace or unresolvable).")
     file_namespace: str = Field(default="", description="The namespace/package/module declaration of the current file (e.g. 'namespace Conduit.Features.Articles;', 'package com.example.users;'). Helps disambiguate same-name types across packages.")
     resolution: Literal["import", "class_to_file", "unresolvable"] = Field(description="'import' = found the import line. 'class_to_file' = same namespace/package, no explicit import. 'unresolvable' = ONLY for built-in/framework types (never for domain types like UserResponse).")
@@ -81,9 +81,9 @@ class CodeAnalysis(BaseModel):
 
 class Parameter(BaseModel):
     name: str = Field(description="Parameter name as it appears in the code.")
-    in_: Literal["path", "query", "header", "cookie"] = Field(alias="in", description="Parameter location. Path params are always required.")
-    required: bool = False
-    schema_: dict = Field(default_factory=dict, alias="schema", description="JSON Schema for the parameter type, e.g. {'type': 'string'}, {'type': 'integer'}.")
+    in_: Literal["path", "query", "header", "cookie"] = Field(alias="in", description="Parameter location.")
+    required: bool = Field(default=False, description="True for path params (always required) and any explicitly required query/header params.")
+    schema_: dict = Field(default_factory=dict, alias="schema", description="JSON Schema for the parameter type, e.g. {'type': 'string'}, {'type': 'integer', 'format': 'int64'}.")
 
     model_config = {"populate_by_name": True}
 
@@ -94,9 +94,9 @@ class RequestBody(BaseModel):
 
 
 class Response(BaseModel):
-    status_code: str = Field(description="HTTP status code: '200', '201', '401', '403', '404', '422', etc.")
+    status_code: str = Field(description="HTTP status code: '200', '201', '401', '403', '404', '422'. POST that creates → 201, DELETE → 200/204, GET/PUT/PATCH → 200. Auth endpoints must have 401. Path param endpoints should have 404.")
     description: str = ""
-    schema_ref: RefHint | None = None
+    schema_ref: RefHint | None = Field(default=None, description="Type reference for the response body. None if response has no body (e.g. 204, 401 with no detail).")
 
 
 class Endpoint(BaseModel):
