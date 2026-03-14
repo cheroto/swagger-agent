@@ -150,17 +150,10 @@ def check_completeness(
                 has_error_responses = False
                 break
 
-    # has_request_bodies: use descriptors as ground truth.
-    # Only flag if a descriptor explicitly declares a request_body but the spec
-    # lacks it. Endpoints where the extractor produced no request_body are
-    # intentionally bodyless (state toggles, actions).
+    # has_request_bodies: always True — the assembler faithfully copies
+    # request bodies from descriptors. Endpoints without request_body in the
+    # descriptor are intentionally bodyless (state toggles, actions).
     has_request_bodies = True
-    for desc in descriptors:
-        for ep in desc.endpoints:
-            if ep.method.lower() in ("post", "put", "patch") and ep.request_body is not None:
-                # The assembler always creates requestBody when the descriptor has one.
-                # This check catches only assembler bugs, not missing bodies from extraction.
-                pass
 
     # has_schemas
     has_schemas = len(schemas) > 0

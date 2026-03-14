@@ -438,20 +438,11 @@ def scan_refs_in_schemas(schemas: dict[str, dict]) -> set[str]:
     """Recursively scan JSON Schema dicts for $ref targets, return schema names.
 
     Extracts "Foo" from "$ref": "#/components/schemas/Foo".
+    Delegates to assembler._extract_refs_from_schema to avoid duplication.
     """
+    from swagger_agent.infra.assembler import _extract_refs_from_schema
+
     refs: set[str] = set()
-
-    def _walk(obj: object) -> None:
-        if isinstance(obj, dict):
-            if "$ref" in obj:
-                ref_val = obj["$ref"]
-                if isinstance(ref_val, str) and ref_val.startswith("#/components/schemas/"):
-                    refs.add(ref_val.split("/")[-1])
-            for v in obj.values():
-                _walk(v)
-        elif isinstance(obj, list):
-            for item in obj:
-                _walk(item)
-
-    _walk(schemas)
+    for schema in schemas.values():
+        refs |= _extract_refs_from_schema(schema)
     return refs
