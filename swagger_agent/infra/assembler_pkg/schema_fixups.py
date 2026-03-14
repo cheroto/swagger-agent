@@ -164,6 +164,13 @@ def _sanitize_schemas(obj: object) -> None:
             if old_key in obj and new_key not in obj:
                 obj[new_key] = obj.pop(old_key)
 
+        # Convert JSON Schema 2020 number-form exclusiveMinimum/Maximum to
+        # OpenAPI 3.0 boolean-form: exclusiveMinimum: 5 → minimum: 5, exclusiveMinimum: true
+        for exc_key, min_key in [("exclusiveMinimum", "minimum"), ("exclusiveMaximum", "maximum")]:
+            if exc_key in obj and isinstance(obj[exc_key], (int, float)):
+                obj[min_key] = obj.pop(exc_key)
+                obj[exc_key] = True
+
         for k, v in list(obj.items()):
             if isinstance(v, str) and k not in _STRING_VALUE_KEYS:
                 stripped = v.strip()

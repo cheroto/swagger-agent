@@ -221,10 +221,17 @@ def assemble_spec(
     # Paths and endpoints
     referenced_schemas: set[str] = set()
 
+    _VALID_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+
     for desc in descriptors:
         for ep in desc.endpoints:
             path_key = _normalize_path(manifest.base_path, ep.path)
             method = ep.method.lower()
+
+            # Skip non-HTTP methods (e.g. "websocket", "unknown")
+            if method not in _VALID_METHODS:
+                logger.warning("Skipping non-HTTP method '%s' on %s", method, path_key)
+                continue
 
             _reconcile_path_params(path_key, ep)
 

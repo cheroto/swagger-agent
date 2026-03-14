@@ -48,6 +48,15 @@ def _sanitize_path_template(path: str) -> str:
         )
         path = constraint_pattern.sub(r"{\1}", path)
 
+    # Strip optional markers: {param?} → {param}, {param=default} → {param}
+    # ASP.NET uses ? for optional and =value for defaults in path templates.
+    path = re.sub(r"\{(\w+)[?][^}]*\}", r"{\1}", path)
+    path = re.sub(r"\{(\w+)=[^}]*\}", r"{\1}", path)
+
+    # Strip catch-all prefix: {*param} → {param}
+    # ASP.NET and other frameworks use * prefix for catch-all route segments.
+    path = re.sub(r"\{\*(\w+)\}", r"{\1}", path)
+
     if len(path) > 1 and path.endswith("/"):
         path = path.rstrip("/")
 
@@ -85,11 +94,22 @@ def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
     """
     path_params = set(re.findall(r"\{(\w+)\}", path_key))
 
-    if not path_params:
-        return
-
     if not ep.parameters:
+        if not path_params:
+            return
         ep.parameters = []
+
+    # Remove orphaned path params even if path has no template params
+    if not path_params:
+        orphans = [p.name for p in ep.parameters if p.in_ == "path"]
+        if orphans:
+            for name in orphans:
+                logger.info(
+                    "Removing orphaned path parameter '%s' not in path template: %s",
+                    name, path_key,
+                )
+            ep.parameters = [p for p in ep.parameters if p.in_ != "path"]
+        return
 
     ep_path_params = {p.name for p in ep.parameters if p.in_ == "path"}
 
@@ -140,6 +160,15 @@ def _reconcile_path_params(path_key: str, ep: Endpoint) -> None:
             p for p in ep.parameters
             if not (p.in_ == "path" and p.name in extra_in_ep)
         ]
+
+    # Force required=True on all path parameters (OpenAPI 3.0 requirement)
+    for p in ep.parameters:
+        if p.in_ == "path" and not p.required:
+            logger.info(
+                "Forcing required=True on path parameter '%s' (OpenAPI 3.0 requirement): %s",
+                p.name, path_key,
+            )
+            p.required = True
 
     ep_path_params_final = {p.name for p in ep.parameters if p.in_ == "path"}
     still_missing = path_params - ep_path_params_final
