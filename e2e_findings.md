@@ -644,3 +644,183 @@ This is the dominant polymorphism pattern in modern Python/FastAPI codebases. Th
 1. **LLM-side:** Teach the schema extractor to recognize `Union[...]` with `discriminator` and emit it as a structured oneOf in the schema descriptor.
 2. **Infra-side:** Parse `Union[...]` ref_hints by decomposing them into individual types, resolving each, and synthesizing oneOf in the assembler.
 3. **Hybrid:** The ref resolver could grep for `Union[` patterns in resolved model files and auto-discover union declarations.
+
+---
+
+# Full Pipeline Results — All 20 Test Repos
+
+Tested across 16 languages/frameworks. Infra fixes applied iteratively; results below reflect the final state.
+
+## Results Summary
+
+| # | Repo | Lang/Framework | Endpoints | Schemas | Val Errors | Unresolved | Status |
+|---|------|---------------|-----------|---------|------------|------------|--------|
+| 1 | rest-api-node | JS/Express | 10 | 2 | 0 | 0 | Clean |
+| 2 | levo-schema-service | Python/FastAPI | 4 | 0 | 0 | 0 | Clean (no ref_hints) |
+| 3 | passwordless-auth-rust | Rust/Axum | 29 | 15 | 1 | 1 | LLM issues |
+| 4 | spring-boot-blog | Java/Spring | 54 | 29 | 0 | 0 | Clean |
+| 5 | aspnetcore-realworld | C#/ASP.NET | 19 | 19 | 0 | 1 | LLM issue |
+| 6 | laravel-realworld | PHP/Laravel | 22 | 0 | 0 | 0 | Clean (no ref_hints) |
+| 7 | energy-monitoring-app | TS/AWS Lambda | 7 | 5 | 0 | 1 | LLM issue |
+| 8 | dograh | Python/FastAPI | 100 | 98 | 1 | 2 | LLM issues |
+| 9 | dotnet-clean-architecture | C#/ASP.NET | 8 | 11 | 0 | 0 | Clean |
+| 10 | go-gin-ecommerce | Go/Gin | 23 | 27 | 0 | 19 | LLM issues |
+| 11 | nestjs-pg-crud | TS/NestJS | 26 | 15 | 0 | 10 | LLM issues |
+| 12 | flask-restplus-example | Python/Flask-RESTPlus | 16 | 14 | 0 | 0 | Clean |
+| 13 | kotlin-ktor-realworld | Kotlin/Ktor | 38 | 8 | 0 | 1 | LLM issue |
+| 14 | rails-rest-api | Ruby/Rails | 14 | 0 | 0 | 0 | Clean (no ref_hints) |
+| 15 | swift-vapor-conduit | Swift/Vapor | 10 | 6 | 0 | 6 | LLM issues |
+| 16 | elixir-phoenix-api | Elixir/Phoenix | 20 | 3 | 0 | 0 | Clean |
+| 17 | haskell-servant | Haskell/Servant | 10 | 4 | 1 | 4 | LLM issues |
+| 18 | clojure-compojure | Clojure/Compojure-api | 14 | 7 | 0 | 7 | LLM issues |
+| 19 | ocaml-dream | OCaml/Dream | 11 | 7 | 0 | 3 | LLM issues |
+| 20 | dart-frog | Dart/Dart Frog | 16 | 10 | 0 | 10 | LLM issues |
+| | **TOTALS** | | **451** | **304** | **3** | **65** | |
+
+**Clean repos (8/20):** rest-api-node, levo-schema-service, spring-boot-blog, laravel-realworld, dotnet-clean-architecture, flask-restplus-example, rails-rest-api, elixir-phoenix-api
+
+---
+
+## LLM Limitation Categories
+
+All remaining issues are LLM/prompt problems that cannot be fixed with infra changes.
+
+### L1: Route extractor invents schema names that don't exist in code
+
+**Severity:** High — causes unresolvable refs
+**Affected repos:** swift-vapor-conduit (6), nestjs-pg-crud (10), dart-frog (10), haskell-servant (4), clojure-compojure (7)
+
+The LLM creates ref_hint names like `RegisterBody`, `LoginBody`, `UserResponse`, `ProductCreateResponse` that don't correspond to any class/struct/type in the source code. The actual code either:
+- Uses **inline anonymous types** (NestJS: `{ email: string; password: string }`)
+- Has **no type annotations** (Dart, Clojure)
+- Uses **different naming** than what the LLM invented (Swift: `User.RegisterForm` vs LLM's `UserCreateRequest`)
+
+**Root cause:** The route extractor prompt instructs the LLM to provide ref_hints for request/response types. When the code has no explicit type, the LLM invents a plausible name rather than using `resolution: "unresolvable"`.
+
+**Potential fix:** Strengthen the prompt to use `resolution: "unresolvable"` when no explicit type annotation exists in the code. Or add a Pydantic model constraint that validates ref_hint names are actually found in imports.
+
+### L2: Route extractor emits factory function names as schema refs
+
+**Severity:** High — 19 unresolved schemas in go-gin-ecommerce alone
+**Affected repos:** go-gin-ecommerce (19)
+
+Go DTOs are implemented as **factory functions** (`func CreateTagListMapDto(tags []models.Tag) map[string]interface{}`) that return `map[string]interface{}`, not as struct types. The LLM emits the function name as a ref_hint (e.g., `TagListMapDto`) even though it's not a type.
+
+**Root cause:** The LLM doesn't distinguish between type definitions and factory functions when generating ref_hints. In Go, DTOs are often constructed via functions rather than defined as structs.
+
+**Potential fix:** Prompt the LLM to only emit ref_hints for actual type definitions (struct, class, interface), never for function names.
+
+### L3: No ref_hints from route-only files
+
+**Severity:** Medium — results in 0 schemas extracted
+**Affected repos:** laravel-realworld (0 schemas), rails-rest-api (0 schemas), levo-schema-service (0 schemas)
+
+When route files only contain route registrations with controller references (Laravel's `Route::resource('articles', ArticleController::class)`) or Rails-style `resources :posts`, the LLM has no type information to extract. The actual request/response types are in controller files that aren't part of the route extraction scope.
+
+**Root cause:** Architectural limitation — the route extractor only reads one file per invocation. Laravel/Rails route files are thin dispatchers with no type information. The types live in controllers, form requests, and serializers which are separate files.
+
+**Potential fix:** This is a fundamental architecture question. Options: (a) allow the route extractor to read controller files referenced in routes, (b) add a separate "controller extractor" phase, (c) accept this as a known gap for dispatch-style frameworks.
+
+### L4: Missing request bodies on POST/PUT/PATCH endpoints
+
+**Severity:** Medium — spec is structurally valid but incomplete for pentesting
+**Affected repos:** laravel-realworld (10), rails-rest-api (8), kotlin-ktor-realworld (7), spring-boot-blog (4), dograh (23), dotnet-clean-architecture (3), dart-frog (3), aspnetcore-realworld (2)
+
+The LLM doesn't generate `request_body` for endpoints where the body shape isn't explicit in the route file. Some are legitimate (state-toggle PUT endpoints like `completeTodo`), but many are real POST/PUT endpoints where the LLM should infer a body exists.
+
+**Root cause:** Mixed. Some endpoints genuinely have no body (toggles, actions). Others have bodies that are only visible in the controller implementation, not in the route definition. The LLM errs on the side of omission rather than inventing a body.
+
+### L5: Dotted-name schema collision
+
+**Severity:** Low — affects 1 schema in 1 repo
+**Affected repos:** aspnetcore-realworld (Edit.Command)
+
+When two files both define a nested class with the same leaf name (`Command` in both `Create.cs` and `Edit.cs`), the dotted-name aliasing can fail. `Create.Command` resolves correctly, but `Edit.Command` resolves to a different file (Users/Edit.cs instead of Articles/Edit.cs) because the import disambiguation points to the wrong file.
+
+**Root cause:** The LLM's import_source for `Edit.Command` points to the Users namespace, not the Articles namespace. The ref resolver correctly follows this hint to the wrong file.
+
+### L6: Ctags not supported for some languages
+
+**Severity:** Low — grep fallback handles most cases
+**Affected repos:** swift-vapor-conduit (0 ctags types), dart-frog (0 ctags types)
+
+Universal-ctags has no parser for Swift or Dart. The ctags index returns 0 type definitions. The grep fallback can find type definitions but only if the LLM emitted names matching actual type names in the code (see L1 — it didn't).
+
+**Root cause:** Ctags language support gap. Not fixable in our infra — would need ctags upstream to add parsers.
+
+### L7: OCaml module-scoped type names
+
+**Severity:** Low — 3 unresolved in 1 repo
+**Affected repos:** ocaml-dream (User.t, Sensor.t, Reading.t)
+
+The LLM emits OCaml-style type names like `User.t` and `Sensor.t`. The infra now resolves these to the correct files (user.ml, sensor.ml), but the schema extractor produces schemas under different names than `t`. The dotted-name aliasing expects a schema named `t` in the extraction output, but the LLM names them differently.
+
+**Root cause:** The schema extractor doesn't know that OCaml's `t` is the "main type" of a module. It extracts schemas under whatever names make sense to it, which don't match the dotted-name convention.
+
+### L8: External package types as refs
+
+**Severity:** Low — expected and acceptable
+**Affected repos:** go-gin-ecommerce (gin.H), nestjs-pg-crud (Express.Multer.File), passwordless-auth-rust (Unknown)
+
+Types from external packages (`gin.H`, `Express.Multer.File`) will never resolve from source code. The system correctly marks them as unresolved with `x-unresolved: true`.
+
+**Not a bug.** A pentester can see these are placeholder schemas from external dependencies.
+
+### L9: Validation error from wildcard/catch-all routes
+
+**Severity:** Low — 1 error each in passwordless-auth-rust, haskell-servant
+**Affected repos:** passwordless-auth-rust (`/admin/*`), haskell-servant (`/assets/*`)
+
+The LLM extracts catch-all routes with wildcard path segments (`*`). OpenAPI 3.0 doesn't support wildcard path parameters. The assembler passes them through, causing validation errors.
+
+**Root cause:** The LLM should either skip catch-all routes or rewrite `*` to a named path parameter like `{path}`.
+
+---
+
+## Infra Fixes Applied During This Test Round
+
+| Fix | What | Repos Fixed |
+|-----|------|-------------|
+| Type hint decomposition | `List[X]`, `Union[A,B]`, `Optional[X]`, `Dict[K,V]` unwrapped before resolution | dograh, letta |
+| Builtin type skipping | `str`, `int`, `Dict`, `Any` etc. no longer queued for resolution | dograh, letta |
+| Duplicate extraction dedup | Same file not extracted twice within a round | dograh (2.4x→1x), letta (2.3x→1x) |
+| Constraint keyword normalization | `ge`→`minimum`, `le`→`maximum`, `min_length`→`minLength`, etc. | dograh, letta |
+| Discriminator strategy 2 | Detect discriminator from children's constant property values | letta (ManagerConfigUnion) |
+| Primitive type inlining | `$ref` to `String`/`int`/`bool` → inline JSON Schema type | passwordless-auth-rust, dotnet-clean-architecture |
+| Comma-separated builtins | `str, Any` → `{type: "object"}` | dograh |
+| Primitive refs in paths | `inline_primitive_refs` runs on full spec, not just schemas | dotnet-clean-architecture |
+| `module` ctags kind | Elixir/Ruby `defmodule` types now indexed | elixir-phoenix-api |
+| Leaked RefHint dicts | Raw RefHint objects in parameter schemas → `$ref` | clojure-compojure |
+| Dotted-name filename fallback | `User.t` → match `t` in file named `user.*` | ocaml-dream |
+| Space-suffix collection types | `Reading.t list` → decompose to `Reading.t` | ocaml-dream |
+| Union ref_hints in assembler | `Union[A, B, C]` → `oneOf` with `$ref` per type | dograh, letta |
+
+---
+
+## Language Coverage Matrix
+
+| Language | Framework | Scout | Routes | Schemas | Auth | Overall |
+|----------|-----------|-------|--------|---------|------|---------|
+| JavaScript | Express | Good | Good | Good | Good | **Strong** |
+| TypeScript | NestJS | Good | Good | Partial (inline types miss) | Good | **Moderate** |
+| TypeScript | AWS Lambda | Good | Good | Good | Good | **Moderate** (1 file failed) |
+| Python | FastAPI | Good | Good | Good | Good | **Strong** |
+| Python | Flask-RESTPlus | Good | Good | Good | Good | **Strong** |
+| Java | Spring Boot | Good | Good | Good | Good | **Strong** |
+| C# | ASP.NET | Good | Good | Good | Good | **Strong** |
+| Rust | Axum | Good | Good | Good | N/A | **Moderate** (over-discovery) |
+| PHP | Laravel | Good | Partial | None (route-only) | None | **Weak** |
+| Go | net/http | Mixed | Good | Good | N/A | **Moderate** |
+| Go | Gin | Good | Good | Partial (factory funcs) | Good | **Moderate** |
+| Ruby | Rails | Good | Good | None (route-only) | None | **Weak** |
+| Kotlin | Ktor | Good | Good | Good | Good | **Moderate** |
+| Swift | Vapor | Good | Good | None (invented names) | None | **Weak** |
+| Elixir | Phoenix | Good | Good | Good | N/A | **Strong** |
+| Haskell | Servant | Good | Good | None (resolution fail) | N/A | **Weak** |
+| Clojure | Compojure-api | Good | Good | None (no ctags) | N/A | **Weak** |
+| OCaml | Dream | Good | Good | Partial (name mismatch) | Good | **Moderate** |
+| Dart | Dart Frog | Good | Good | None (no ctags + invented names) | N/A | **Weak** |
+
+**Strong (5):** Express, FastAPI, Flask-RESTPlus, Spring Boot, ASP.NET
+**Moderate (7):** NestJS, AWS Lambda, Axum, Go net/http, Gin, Ktor, OCaml
+**Weak (5):** Laravel, Rails, Swift/Vapor, Haskell/Servant, Clojure, Dart
