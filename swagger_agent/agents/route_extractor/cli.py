@@ -45,7 +45,12 @@ def main() -> None:
     parser.add_argument("--manifest", metavar="PATH", help="Path to a discovery manifest JSON")
     parser.add_argument("--dump-json", metavar="PATH", help="Save full run record to JSON file")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show full JSON descriptor")
+    parser.add_argument("--cache", action="store_true", help="Enable LLM response caching")
     args = parser.parse_args()
+
+    if args.cache:
+        from swagger_agent.config import enable_cache
+        enable_cache()
 
     target_file = os.path.abspath(args.target_file)
     if not os.path.isfile(target_file):

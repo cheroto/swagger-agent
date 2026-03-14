@@ -19,8 +19,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import instructor
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from swagger_agent.config import LLMConfig
@@ -412,11 +410,8 @@ def run_scout(
     if event_handler is None:
         event_handler = ScoutEventHandler()
 
-    from swagger_agent.config import _INSTRUCTOR_MODES
-    base_url, model = config.for_agent("scout")
-    raw_client = OpenAI(base_url=base_url, api_key=config.llm_api_key)
-    mode = _INSTRUCTOR_MODES.get(config.instructor_mode.lower(), instructor.Mode.TOOLS)
-    client = instructor.from_openai(raw_client, mode=mode)
+    from swagger_agent.config import make_client
+    client, model = make_client(config, "scout")
 
     tools = build_scout_tools(target_dir)
 

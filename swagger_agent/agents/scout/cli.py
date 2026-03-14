@@ -43,7 +43,12 @@ def main() -> None:
     parser.add_argument("--turn", type=int, metavar="N", help="Print detailed info for turn N")
     parser.add_argument("--no-live", action="store_true", help="Disable live dashboard (use scrolling output)")
     parser.add_argument("--no-prescan", action="store_true", help="Skip deterministic pre-scan (start from scratch)")
+    parser.add_argument("--cache", action="store_true", help="Enable LLM response caching")
     args = parser.parse_args()
+
+    if args.cache:
+        from swagger_agent.config import enable_cache
+        enable_cache()
 
     target_dir = os.path.abspath(args.target_dir)
     if not os.path.isdir(target_dir):

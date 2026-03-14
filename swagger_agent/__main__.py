@@ -162,6 +162,14 @@ def main() -> None:
         "--telemetry-from", metavar="PATH",
         help="Print telemetry from a prior result.json and exit (no run)",
     )
+    parser.add_argument(
+        "--cache", action="store_true",
+        help="Enable LLM response caching (replay identical calls from .cache/llm/)",
+    )
+    parser.add_argument(
+        "--clear-cache", action="store_true",
+        help="Clear the LLM response cache and exit",
+    )
     args = parser.parse_args()
 
     # -- Replay mode: just print telemetry from a prior result.json --
@@ -180,6 +188,18 @@ def main() -> None:
         _print_telemetry_table(telemetry_data["calls"], console)
         sys.exit(0)
 
+    # -- Clear cache mode --
+    if args.clear_cache:
+        from swagger_agent.cache import clear
+        n = clear()
+        print(f"Cleared {n} cached LLM response(s).")
+        sys.exit(0)
+
+    # -- Enable cache if requested --
+    if args.cache:
+        from swagger_agent.config import enable_cache
+        enable_cache()
+
     # Validate target
     if not args.target_dir:
         parser.error("target_dir is required (unless using --telemetry-from)")
@@ -192,6 +212,8 @@ def main() -> None:
 
     console.print(f"[dim]LLM: {config.llm_base_url} / {config.llm_model}[/dim]")
     console.print(f"[dim]Target: {os.path.abspath(args.target_dir)}[/dim]")
+    if args.cache:
+        console.print("[dim]Cache: enabled (.cache/llm/)[/dim]")
     console.print()
 
     # Use live dashboard when stderr is a TTY (unless --no-dashboard)

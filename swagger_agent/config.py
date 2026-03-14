@@ -50,12 +50,25 @@ class LLMConfig(BaseSettings):
         return base_url, model
 
 
+# Module-level cache toggle — set by CLI before any clients are created
+_cache_enabled = False
+
+
+def enable_cache() -> None:
+    global _cache_enabled
+    _cache_enabled = True
+
+
 def make_client(config: LLMConfig, agent: str) -> tuple[instructor.Instructor, str]:
     """Create an instructor-patched OpenAI client for a specific agent."""
     base_url, model = config.for_agent(agent)
     raw_client = OpenAI(base_url=base_url, api_key=config.llm_api_key)
     mode = _INSTRUCTOR_MODES.get(config.instructor_mode.lower(), instructor.Mode.TOOLS)
-    return instructor.from_openai(raw_client, mode=mode), model
+    client = instructor.from_openai(raw_client, mode=mode)
+    if _cache_enabled:
+        from swagger_agent.cache import wrap_client
+        client = wrap_client(client, base_url)
+    return client, model
 
 
 def make_raw_client(config: LLMConfig, agent: str) -> tuple[OpenAI, str]:
