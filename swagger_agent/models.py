@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 class RefHint(BaseModel):
     ref_hint: str = Field(description="Type name as it appears in code. Use the inner type only, strip collection wrappers: List<Article> → 'Article'.")
+    type_origin: Literal["declared", "inferred"] = Field(description="'declared' = this exact type name appears as a class/struct/interface/type/schema definition or in an import statement in the code. 'inferred' = no type with this name exists in the code — you are inventing a descriptive name for an anonymous/inline/implicit type (e.g. inline { email: string } or a factory function return).")
     import_line: str = Field(default="", description="The exact import/require/using statement that imports this type. Empty string if not imported (same-namespace or unresolvable).")
     file_namespace: str = Field(default="", description="The namespace/package/module declaration of the current file (e.g. 'namespace Conduit.Features.Articles;', 'package com.example.users;'). Helps disambiguate same-name types across packages.")
     resolution: Literal["import", "class_to_file", "unresolvable"] = Field(description="'import' = found the import line. 'class_to_file' = same namespace/package, no explicit import. 'unresolvable' = ONLY for built-in/framework types (never for domain types like UserResponse).")
@@ -99,13 +100,14 @@ class Response(BaseModel):
 
 
 class Endpoint(BaseModel):
-    method: str = Field(description="HTTP method: GET, POST, PUT, PATCH, DELETE (uppercase).")
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] = Field(description="HTTP method (uppercase). Only standard HTTP methods — do not include WebSocket, gRPC, or other non-HTTP protocols.")
     path: str = Field(description="Full path including base_path, using the framework's param syntax (e.g. /api/users/:id or /api/users/{id}).")
     operation_id: str = Field(description="Derived from the handler function name (e.g. 'getUser', 'create_article').")
     tags: list[str] = Field(default_factory=list, description="Grouping tags derived from controller/router name, e.g. ['Articles'].")
     security: list[str] = Field(default_factory=list, description="Security scheme names. [] = explicitly public (no auth). ['BearerAuth'] = requires auth. Always set, never omit.")
     parameters: list[Parameter] = Field(default_factory=list)
-    request_body: RequestBody | None = Field(default=None, description="Include only when the endpoint consumes a request body.")
+    request_body: RequestBody | None = Field(default=None, description="Include for any endpoint that consumes a request body. For POST/PUT/PATCH with unknown body shape, provide with schema_ref resolution='unresolvable'. Set null ONLY for bodyless endpoints (GET, DELETE, state toggles).")
+    request_body_reason: str = Field(default="", description="When request_body is null on POST/PUT/PATCH, explain why: 'state toggle', 'action endpoint', 'webhook callback', 'no body evidence in code'. Empty string when request_body is provided or method is GET/DELETE.")
     responses: list[Response] = Field(default_factory=list, description="All response codes including errors. Auth endpoints must have 401. Endpoints with path params should have 404.")
 
 

@@ -86,30 +86,35 @@ _PHASE2_OUTPUT_FORMAT = """\
 
 ## Request Body Detection
 
-- Only include a request_body when you see explicit evidence of body consumption in the handler signature or code:
+- Include request_body when you see evidence of body consumption in the handler:
   - A parameter with a body marker (e.g. [FromBody], @RequestBody, Pydantic model type, req.body usage)
   - A parameter that is a complex/model type (not a path/query param, not CancellationToken, not primitive)
-- If the handler only takes path parameters, query parameters, or framework infrastructure parameters (CancellationToken, HttpContext, etc.) → set request_body: null (no body)
-- For bodies with no visible schema type, set `schema_ref: null` but still include the request_body with `content_type: "application/json"`.
-- PATCH endpoints follow the same rule: only include request_body if evidence of body consumption exists.
+- For POST/PUT/PATCH with unknown body shape: still include request_body with schema_ref using `type_origin: "inferred"` and `resolution: "unresolvable"`. A pentester needs to know the endpoint accepts a body even if the shape is unknown.
+- Set request_body: null ONLY for genuinely bodyless endpoints (GET, DELETE, state toggles like /complete, /activate).
+- When request_body is null on POST/PUT/PATCH, set `request_body_reason` to explain why (e.g. "state toggle", "action endpoint", "webhook callback", "no body evidence in code").
 
 ## RefHint Rules
 
 For every type reference (request bodies, response schemas, parameter types):
 
+### type_origin (CRITICAL — determines whether infra attempts resolution)
+
+- `type_origin: "declared"` — this exact type name exists as a class, struct, interface, type alias, or schema definition somewhere in the codebase, OR appears in an import statement. Infrastructure WILL attempt to find and extract it.
+- `type_origin: "inferred"` — NO type with this name exists in the code. You are inventing a descriptive name for an anonymous/inline type (e.g. `{ email: string; password: string }`) or a factory function return (e.g. `map[string]interface{}`). Infrastructure will NOT attempt resolution — it will inline as `{type: "object"}`.
+
+**Decision rule:** Can you point to a line in the code that says `class X`, `struct X`, `type X`, `interface X`, or `import X`? If yes → `declared`. If no → `inferred`.
+
+### resolution (only meaningful when type_origin is "declared")
+
 1. **Type appears in the import/require/using statements:**
    - `resolution: "import"`, `import_line`: the exact import statement
-   - This applies to ALL languages: Python `from`/`import`, JS `require`/`import`, Java `import`, C# `using`, Go `import`, Rust `use`, PHP `use`, Ruby `require`, etc.
 
 2. **Type is used in the code but has NO import line** — same package/namespace/module:
    - `resolution: "class_to_file"`, `import_line`: empty
-   - This is COMMON: types in the same namespace (C#), same package (Java/Go), same directory (JS/TS), or same module (Python) often need no explicit import.
-   - If a type name appears as a return type, parameter type, or is instantiated, and there is no import for it, it is `class_to_file` — NOT `unresolvable`.
 
 3. **Framework/language built-in types ONLY:**
    - `resolution: "unresolvable"`
    - STRICTLY for: built-in types (dict, object, string, int, Any), framework base types (Response, IActionResult, HttpResponse, ActionResult, Task), and generic containers with no named inner type.
-   - Domain-specific names (ArticleEnvelope, UserResponse, PostRequest) are NEVER unresolvable — use `class_to_file`.
 
 **IMPORTANT:** Always set `file_namespace` to the namespace/package declaration at the top of the current file. This is critical for disambiguation.
 

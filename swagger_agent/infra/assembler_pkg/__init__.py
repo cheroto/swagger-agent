@@ -5,7 +5,7 @@ Re-exports all public symbols for backward compatibility.
 
 __all__ = [
     "AssemblyResult", "assemble_spec",
-    "_build_ref", "_build_operation", "_derive_security_scheme",
+    "_build_ref", "_build_schema_for_ref", "_build_operation", "_derive_security_scheme",
     "_parse_ref_hint", "_parse_union_ref_hint", "_sanitize_ref_hint",
     "_normalize_path", "_reconcile_path_params", "_replace_outside_braces",
     "_sanitize_path_template",
@@ -20,6 +20,7 @@ __all__ = [
 from .assemble import (  # noqa: F401
     AssemblyResult,
     _build_ref,
+    _build_schema_for_ref,
     _derive_security_scheme,
     _build_operation,
     _parse_ref_hint,

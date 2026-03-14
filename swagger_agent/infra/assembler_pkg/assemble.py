@@ -109,6 +109,17 @@ def _parse_union_ref_hint(name: str) -> list[str] | None:
     return [p for p in parts if p]
 
 
+def _build_schema_for_ref(ref_hint_obj) -> dict:
+    """Build the schema dict for a RefHint, respecting type_origin.
+
+    Inferred types (no real type in code) get inlined as {type: "object"}
+    instead of a $ref that would be unresolvable.
+    """
+    if hasattr(ref_hint_obj, "type_origin") and ref_hint_obj.type_origin == "inferred":
+        return {"type": "object", "description": f"Inferred type: {ref_hint_obj.ref_hint}"}
+    return _build_ref(ref_hint_obj.ref_hint)
+
+
 def _build_ref(name: str) -> dict:
     """Build an OpenAPI $ref (or oneOf for unions, array for collections)."""
     union_parts = _parse_union_ref_hint(name)
@@ -159,7 +170,7 @@ def _build_operation(ep: Endpoint) -> dict:
     if ep.request_body:
         rb = ep.request_body
         if rb.schema_ref:
-            schema = _build_ref(rb.schema_ref.ref_hint)
+            schema = _build_schema_for_ref(rb.schema_ref)
         else:
             schema = {"type": "object"}
         op["requestBody"] = {
@@ -172,7 +183,7 @@ def _build_operation(ep: Endpoint) -> dict:
             entry: dict = {"description": resp.description or f"Response {resp.status_code}"}
             if resp.schema_ref:
                 entry["content"] = {
-                    "application/json": {"schema": _build_ref(resp.schema_ref.ref_hint)}
+                    "application/json": {"schema": _build_schema_for_ref(resp.schema_ref)}
                 }
             responses[resp.status_code] = entry
         op["responses"] = responses
@@ -221,17 +232,10 @@ def assemble_spec(
     # Paths and endpoints
     referenced_schemas: set[str] = set()
 
-    _VALID_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-
     for desc in descriptors:
         for ep in desc.endpoints:
             path_key = _normalize_path(manifest.base_path, ep.path)
             method = ep.method.lower()
-
-            # Skip non-HTTP methods (e.g. "websocket", "unknown")
-            if method not in _VALID_METHODS:
-                logger.warning("Skipping non-HTTP method '%s' on %s", method, path_key)
-                continue
 
             _reconcile_path_params(path_key, ep)
 
@@ -240,10 +244,12 @@ def assemble_spec(
 
             spec["paths"][path_key][method] = _build_operation(ep)
 
-            # Track referenced schema names
+            # Track referenced schema names (skip inferred — they're inlined)
             for ref_source in (
                 [ep.request_body.schema_ref] if ep.request_body and ep.request_body.schema_ref else []
             ) + [resp.schema_ref for resp in ep.responses if resp.schema_ref]:
+                if hasattr(ref_source, "type_origin") and ref_source.type_origin == "inferred":
+                    continue
                 hint_name = ref_source.ref_hint
                 union_parts = _parse_union_ref_hint(hint_name)
                 if union_parts:

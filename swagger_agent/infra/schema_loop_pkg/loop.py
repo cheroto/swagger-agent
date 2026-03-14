@@ -113,9 +113,21 @@ def run_schema_loop(
     extracted_files: set[str] = set()
     queue: deque[tuple[str, str | None]] = deque()
 
-    # 1. Seed the queue from ref_hints (sanitize, decompose, skip builtins)
+    # 1. Seed the queue from ref_hints (sanitize, decompose, skip builtins/inferred)
     for hint in ref_hints:
         raw_name = _sanitize_ref_hint(hint["ref_hint"])
+
+        # Skip inferred types — these are LLM-invented names with no real type
+        # in the codebase. The assembler will inline them as {type: "object"}.
+        if hint.get("type_origin") == "inferred":
+            logger.info("Skipping inferred type (no source type): %s", raw_name)
+            all_schemas[raw_name] = {
+                "type": "object",
+                "description": f"Inferred type: {raw_name} (no explicit type definition in source code).",
+                "x-inferred": True,
+            }
+            continue
+
         import_source = (
             hint.get("import_line")
             or hint.get("file_namespace")
