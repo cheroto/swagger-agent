@@ -119,7 +119,7 @@ def run_schema_loop(
 
         # Skip inferred types — these are LLM-invented names with no real type
         # in the codebase. The assembler will inline them as {type: "object"}.
-        if hint.get("type_origin") == "inferred":
+        if hint.get("resolution") == "inferred":
             logger.info("Skipping inferred type (no source type): %s", raw_name)
             all_schemas[raw_name] = {
                 "type": "object",

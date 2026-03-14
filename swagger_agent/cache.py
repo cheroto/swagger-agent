@@ -24,8 +24,14 @@ def _cache_key(
     base_url: str,
     messages: list[dict[str, str]],
     response_model_name: str,
+    response_model_schema: str = "",
 ) -> str:
-    """SHA-256 hash of all inputs that affect LLM output."""
+    """SHA-256 hash of all inputs that affect LLM output.
+
+    Includes the response model's JSON schema so that field description
+    changes (which instructor passes to the LLM as tool definitions)
+    invalidate the cache automatically.
+    """
     blob = json.dumps(
         {
             "model": model,
@@ -33,6 +39,7 @@ def _cache_key(
             "base_url": base_url,
             "messages": messages,
             "response_model": response_model_name,
+            "response_model_schema": response_model_schema,
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -89,7 +96,10 @@ def wrap_client(client: Any, base_url: str) -> Any:
         temperature: float = 0.0,
         **kwargs: Any,
     ) -> Any:
-        key = _cache_key(model, temperature, base_url, messages, response_model.__name__)
+        # Include the model's JSON schema in the cache key so that
+        # field description changes invalidate cached responses.
+        schema_str = json.dumps(response_model.model_json_schema(), sort_keys=True)
+        key = _cache_key(model, temperature, base_url, messages, response_model.__name__, schema_str)
         cached = load(key)
         if cached is not None:
             logger.info("Cache HIT: %s (model=%s)", response_model.__name__, model)
