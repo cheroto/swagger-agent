@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import yaml
 
-from swagger_agent.models import DiscoveryManifest, EndpointDescriptor, Endpoint
+from swagger_agent.models import DiscoveryManifest, EndpointDescriptor, Endpoint, SecurityRequirement
 
 from .path_utils import _normalize_path, _reconcile_path_params
 from .schema_fixups import (
@@ -19,7 +19,6 @@ from .schema_fixups import (
     _fix_ref_siblings,
     _normalize_schema_case,
     _sanitize_schemas,
-    _synthesize_polymorphism,
     inline_primitive_refs,
     primitive_schema,
 )
@@ -159,10 +158,24 @@ def _parse_union_ref_hint(name: str) -> list[str] | None:
 
 
 def _build_schema_for_ref(ref_hint_obj, ref_rewrite: dict[str, str] | None = None) -> dict:
-    """Build the schema dict for a RefHint, applying name rewrites if any."""
+    """Build the schema dict for a RefHint, applying name rewrites if any.
+
+    Uses structured is_array/is_nullable fields when set, falling through
+    to _build_ref's regex-based parsing as a safety net.
+    """
     name = ref_hint_obj.ref_hint
     if ref_rewrite:
         name = ref_rewrite.get(name, name)
+
+    # Structured fields from the LLM take priority over regex parsing
+    if getattr(ref_hint_obj, "is_array", False) or getattr(ref_hint_obj, "is_nullable", False):
+        inner = _build_ref(name)
+        if getattr(ref_hint_obj, "is_array", False):
+            inner = {"type": "array", "items": inner}
+        if getattr(ref_hint_obj, "is_nullable", False):
+            inner["nullable"] = True
+        return inner
+
     return _build_ref(name)
 
 
@@ -187,6 +200,23 @@ def _build_ref(name: str) -> dict:
 
 
 # ── Operation / security helpers ─────────────────────────────────────────
+
+def _scheme_type_to_openapi(scheme_type: str) -> dict:
+    """Map a SecurityRequirement.scheme_type to an OpenAPI securitySchemes entry."""
+    if scheme_type == "bearer":
+        return {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+    if scheme_type == "apikey":
+        return {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+    if scheme_type == "basic":
+        return {"type": "http", "scheme": "basic"}
+    if scheme_type == "oauth2":
+        return {
+            "type": "oauth2",
+            "flows": {"implicit": {"authorizationUrl": "", "scopes": {}}},
+        }
+    # Fallback for unknown types
+    return {"type": "http", "scheme": "bearer"}
+
 
 def _derive_security_scheme(name: str) -> dict:
     """Heuristic: map a security scheme name to an OpenAPI securitySchemes entry."""
@@ -232,7 +262,7 @@ def _build_operation(
         responses: dict = {}
         for resp in ep.responses:
             entry: dict = {"description": resp.description or f"Response {resp.status_code}"}
-            if resp.schema_ref.ref_hint:
+            if not resp.schema_ref.is_empty:
                 entry["content"] = {
                     "application/json": {
                         "schema": _build_schema_for_ref(resp.schema_ref, ref_rewrite),
@@ -246,7 +276,7 @@ def _build_operation(
     if len(ep.security) == 0:
         op["security"] = []
     else:
-        op["security"] = [{scheme: []} for scheme in ep.security]
+        op["security"] = [{req.name: []} for req in ep.security]
 
     return op
 
@@ -270,15 +300,17 @@ def assemble_spec(
         "components": {"schemas": {}, "securitySchemes": {}},
     }
 
-    # Security schemes
-    all_scheme_names: set[str] = set()
+    # Security schemes — collect SecurityRequirement objects from all endpoints
+    all_schemes: dict[str, SecurityRequirement] = {}
     for desc in descriptors:
         for ep in desc.endpoints:
-            if ep.security:
-                all_scheme_names.update(ep.security)
+            for req in ep.security:
+                if req.name not in all_schemes:
+                    all_schemes[req.name] = req
 
-    for name in sorted(all_scheme_names):
-        spec["components"]["securitySchemes"][name] = _derive_security_scheme(name)
+    for name in sorted(all_schemes):
+        req = all_schemes[name]
+        spec["components"]["securitySchemes"][name] = _scheme_type_to_openapi(req.scheme_type)
 
     if not spec["components"]["securitySchemes"]:
         del spec["components"]["securitySchemes"]
@@ -318,7 +350,7 @@ def assemble_spec(
             # Track referenced schema names (using rewritten names)
             for ref_source in (
                 [ep.request_body.schema_ref] if ep.request_body and ep.request_body.schema_ref else []
-            ) + [resp.schema_ref for resp in ep.responses if resp.schema_ref.ref_hint]:
+            ) + [resp.schema_ref for resp in ep.responses if not resp.schema_ref.is_empty]:
                 hint_name = ref_source.ref_hint
                 if ref_rewrite:
                     hint_name = ref_rewrite.get(hint_name, hint_name)
@@ -373,9 +405,6 @@ def assemble_spec(
     _break_ref_cycles(spec)
     _normalize_schema_case(spec)
     _deduplicate_operation_ids(spec)
-    if inheritance_map:
-        _synthesize_polymorphism(spec, inheritance_map)
-
     if not spec["components"]["schemas"]:
         del spec["components"]["schemas"]
     if not spec.get("components"):

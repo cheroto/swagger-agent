@@ -23,6 +23,7 @@ from swagger_agent.models import (
     RefHint,
     RequestBody,
     Response,
+    SecurityRequirement,
 )
 
 
@@ -234,22 +235,22 @@ class TestRequestBodyFalsePositive:
                     method="PUT",
                     path="/items/{id}",
                     operation_id="updateItem",
-                    security=["BearerAuth"],
+                    security=[SecurityRequirement(name="BearerAuth", scheme_type="bearer")],
                     parameters=[Parameter(name="id", **{"in": "path"}, required=True)],
                     request_body=RequestBody(
                         content_type="application/json",
                         schema_ref=_unresolvable_ref("UpdateItemRequest"),
                     ),
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
                 # State toggle — legitimately no body
                 Endpoint(
                     method="PUT",
                     path="/items/{id}/complete",
                     operation_id="completeItem",
-                    security=["BearerAuth"],
+                    security=[SecurityRequirement(name="BearerAuth", scheme_type="bearer")],
                     parameters=[Parameter(name="id", **{"in": "path"}, required=True)],
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
             ]),
         ]
@@ -296,18 +297,18 @@ class TestOpaqueBodyWarning:
                         content_type="application/json",
                         schema_ref=_unresolvable_ref("LoginRequest"),
                     ),
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
                 Endpoint(
                     method="POST",
                     path="/articles",
                     operation_id="createArticle",
-                    security=["BearerAuth"],
+                    security=[SecurityRequirement(name="BearerAuth", scheme_type="bearer")],
                     request_body=RequestBody(
                         content_type="application/json",
                         schema_ref=_unresolvable_ref("CreateArticleRequest"),
                     ),
-                    responses=[Response(status_code="201", description="Created")],
+                    responses=[Response(status_code="201", description="Created", schema_ref=_unresolvable_ref())],
                 ),
             ]),
         ]
@@ -364,13 +365,13 @@ class TestEndpointDuplicationDetection:
                     method="POST",
                     path="/request/magic",
                     operation_id="request_magic",
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
                 Endpoint(
                     method="POST",
                     path="/totp/enroll",
                     operation_id="totp_enroll",
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
             ],
             source_file="routes.rs",
@@ -382,13 +383,13 @@ class TestEndpointDuplicationDetection:
                     method="POST",
                     path="/request-magic",
                     operation_id="request_magic_handler",
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
                 Endpoint(
                     method="POST",
                     path="/totp-enroll",
                     operation_id="totp_enroll_handler",
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
             ],
             source_file="handlers.rs",
@@ -435,19 +436,19 @@ class TestEndpointsHaveAuthPublicOmission:
                     method="POST",
                     path="/articles",
                     operation_id="createArticle",
-                    security=["BearerAuth"],
+                    security=[SecurityRequirement(name="BearerAuth", scheme_type="bearer")],
                     request_body=RequestBody(
                         content_type="application/json",
                         schema_ref=_unresolvable_ref("CreateArticleRequest"),
                     ),
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
                 Endpoint(
                     method="GET",
                     path="/articles",
                     operation_id="listArticles",
                     security=[],  # Explicitly public
-                    responses=[Response(status_code="200", description="OK")],
+                    responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
             ]),
         ]
@@ -476,7 +477,7 @@ class TestEndpointsHaveAuthPublicOmission:
             method="GET",
             path="/test",
             operation_id="test",
-            responses=[Response(status_code="200", description="OK")],
+            responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
         )
         assert ep.security == [], (
             "Endpoint.security should default to [] (public), not None"

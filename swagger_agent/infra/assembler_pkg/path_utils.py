@@ -79,7 +79,9 @@ def _normalize_path(base_path: str, endpoint_path: str) -> str:
     if not full.startswith("/"):
         full = "/" + full
 
-    # Convert framework-specific param syntax to OpenAPI {param}:
+    # Safety nets: convert framework-specific param syntax to OpenAPI {param}.
+    # The LLM should already output {param} format, but these catch stragglers.
+    prev = full
     # Express/Sinatra:  :param
     full = _replace_outside_braces(full, r":(\w+)", r"{\1}")
     # Flask typed:      <int:param>, <string:param>, <uuid:param>
@@ -88,6 +90,11 @@ def _normalize_path(base_path: str, endpoint_path: str) -> str:
     full = re.sub(r"<(\w+)>", r"{\1}", full)
     # Corrupted Flask:  <int{param}> (LLM merges type and brace)
     full = re.sub(r"<\w+\{(\w+)\}>", r"{\1}", full)
+    if full != prev:
+        logger.warning(
+            "Path param safety net fired (LLM should have converted these): %s → %s",
+            prev, full,
+        )
 
     full = _sanitize_path_template(full)
     return full

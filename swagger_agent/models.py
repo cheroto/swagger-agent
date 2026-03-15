@@ -9,19 +9,18 @@ from pydantic import BaseModel, Field
 # --- Ref Hints ---
 
 
-class InlineProperty(BaseModel):
-    """A single property observed in inline validation or anonymous type definitions."""
-    name: str = Field(description="Property name as it appears in the validation/type definition.")
-    type: str = Field(description="JSON Schema type: 'string', 'integer', 'number', 'boolean', 'array', 'object'.")
-    required: bool = Field(description="True if the property is marked as required in the validation code.")
-
-
 class RefHint(BaseModel):
     ref_hint: str = Field(description="Type name as it appears in code. Use the inner type only, strip collection wrappers: List<Article> → 'Article'.")
     resolution: Literal["import", "class_to_file", "unresolvable"] = Field(description="'import' = found the import/require/using statement for this type's package — provide import_line. 'class_to_file' = same namespace/package, no explicit import needed. 'unresolvable' = framework/language builtin (Response, IActionResult, int, string) or external package type.")
     import_line: str = Field(default="", description="The exact import/require/using statement. Only meaningful when resolution='import'. Empty string otherwise.")
     file_namespace: str = Field(default="", description="The namespace/package/module declaration of the current file (e.g. 'namespace Conduit.Features.Articles;', 'package com.example.users;'). Helps disambiguate same-name types across packages.")
-    inline_properties: list[InlineProperty] = Field(default_factory=list, description="When resolution='unresolvable' AND the type's shape is visible in validation code (Joi schema, inline object type, struct literal, class-validator decorators), list each property here. Empty list when the type is importable or its shape is not visible in this file.")
+    is_array: bool = Field(default=False, description="True if the original type was a collection/list/array wrapper (List<T>, T[], IEnumerable<T>). ref_hint contains the inner element type only.")
+    is_nullable: bool = Field(default=False, description="True if the original type was optional/nullable (Optional[T], T?, T | null). ref_hint contains the inner type only.")
+
+    @property
+    def is_empty(self) -> bool:
+        """True when ref_hint is blank — no meaningful type reference."""
+        return not self.ref_hint
 
 
 # --- Discovery Manifest ---
@@ -83,6 +82,14 @@ class CodeAnalysis(BaseModel):
     endpoints: list[EndpointSketch] = Field(description="Every endpoint found in the file.")
 
 
+# --- Security ---
+
+
+class SecurityRequirement(BaseModel):
+    name: str = Field(description="Security scheme name (e.g. 'BearerAuth', 'OAuth2', 'ApiKeyAuth').")
+    scheme_type: Literal["bearer", "apikey", "basic", "oauth2"] = Field(description="Auth mechanism: 'bearer' for JWT/token auth, 'apikey' for API key, 'basic' for HTTP Basic, 'oauth2' for OAuth2 flows.")
+
+
 # --- Endpoint Descriptor ---
 
 
@@ -108,10 +115,10 @@ class Response(BaseModel):
 
 class Endpoint(BaseModel):
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] = Field(description="HTTP method (uppercase). Only standard HTTP methods — do not include WebSocket, gRPC, or other non-HTTP protocols.")
-    path: str = Field(description="Full path including base_path, using the framework's param syntax (e.g. /api/users/:id or /api/users/{id}).")
+    path: str = Field(description="Full path including base_path. Use OpenAPI parameter syntax {param} — convert from framework syntax (:param → {param}, <param> → {param}, <int:param> → {param}). Strip route constraints, optional markers, catch-all prefixes.")
     operation_id: str = Field(description="Derived from the handler function name (e.g. 'getUser', 'create_article').")
     tags: list[str] = Field(default_factory=list, description="Grouping tags derived from controller/router name, e.g. ['Articles'].")
-    security: list[str] = Field(default_factory=list, description="Security scheme names. [] = explicitly public (no auth). ['BearerAuth'] = requires auth. Always set, never omit.")
+    security: list[SecurityRequirement] = Field(default_factory=list, description="Security requirements. [] = explicitly public (no auth). Always set, never omit.")
     parameters: list[Parameter] = Field(default_factory=list)
     request_body: RequestBody | None = Field(default=None, description="Include for any endpoint that consumes a request body. For POST/PUT/PATCH with unknown body shape, provide with schema_ref resolution='unresolvable'. Set null ONLY for bodyless endpoints (GET, DELETE, state toggles).")
     request_body_reason: str = Field(default="", description="When request_body is null on POST/PUT/PATCH, explain why: 'state toggle', 'action endpoint', 'webhook callback', 'no body evidence in code'. Empty string when request_body is provided or method is GET/DELETE.")
@@ -121,6 +128,7 @@ class Endpoint(BaseModel):
 class EndpointDescriptor(BaseModel):
     source_file: str
     endpoints: list[Endpoint]
+    inline_schemas: dict[str, dict] = Field(default_factory=dict, description="JSON Schema objects keyed by ref_hint name, for types whose shape is visible in this file's validation code but have no importable class definition. Infrastructure merges these into the schema store before resolution.")
 
 
 # --- Schema Descriptor ---
@@ -128,7 +136,7 @@ class EndpointDescriptor(BaseModel):
 
 class SchemaDescriptor(BaseModel):
     source_file: str
-    schemas: dict[str, dict] = Field(description="Map of schema name to JSON Schema object. Each value must have 'type', 'properties', and optionally 'required' (non-empty array of field names).")
+    schemas: dict[str, dict] = Field(description="Map of schema name to JSON Schema object. Each value must have 'type', 'properties', and optionally 'required' (non-empty array of field names). Exclude fields marked with serialization-exclusion annotations (@JsonIgnore, [JsonIgnore], @Transient, etc.). Use serialized field names (@JsonProperty name, alias, etc.) not code field names. Do NOT emit 'required': [].")
 
 
 # --- State Models ---

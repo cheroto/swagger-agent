@@ -51,7 +51,7 @@ def print_endpoints_table(descriptor: EndpointDescriptor, console: Console | Non
         method_style = method_colors.get(ep.method.upper(), "white")
         method_str = f"[{method_style}]{ep.method.upper()}[/{method_style}]"
 
-        auth_str = ", ".join(ep.security) if ep.security else ("[dim]public[/dim]" if ep.security == [] else "[dim]-[/dim]")
+        auth_str = ", ".join(s.name for s in ep.security) if ep.security else ("[dim]public[/dim]" if ep.security == [] else "[dim]-[/dim]")
         param_count = str(len(ep.parameters)) if ep.parameters else "[dim]0[/dim]"
         body_str = "[green]yes[/green]" if ep.request_body else "[dim]no[/dim]"
         responses_str = ", ".join(r.status_code for r in ep.responses)

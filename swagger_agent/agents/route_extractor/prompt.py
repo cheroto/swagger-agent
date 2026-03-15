@@ -69,7 +69,7 @@ Do NOT extract full endpoint details — just identify patterns and structure.
 _PHASE2_OUTPUT_FORMAT = """\
 ## Strategy
 
-- Combine base_path + router-level prefix + endpoint-level path. Keep the framework's path param syntax as-is.
+- Combine base_path + router-level prefix + endpoint-level path. Convert path parameters to OpenAPI {param} syntax.
 - For serverless handlers with no route decorators, infer path from directory/filename structure and HTTP method from filename prefix or code behavior.
 - For route resource declarations, expand into individual CRUD endpoints.
 - Every path parameter segment in the URL must have a matching Parameter object.
@@ -105,21 +105,23 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str) -> str:
         sections.append("\n## Authentication\n")
         for ap in analysis.auth_patterns:
             scheme_name = _scheme_name_from_type(ap.scheme_type)
+            scheme_type = ap.scheme_type if ap.scheme_type in ("bearer", "apikey", "basic", "oauth2") else "bearer"
+            sec_obj = f'{{"name": "{scheme_name}", "scheme_type": "{scheme_type}"}}'
             if ap.applies_to == "all":
                 sections.append(
                     f"All endpoints in this file use `{ap.indicator}` ({ap.mechanism}). "
-                    f'Set security: ["{scheme_name}"] on every endpoint.'
+                    f"Set security: [{sec_obj}] on every endpoint."
                 )
             elif ap.applies_to == "per-endpoint":
                 sections.append(
                     f"Endpoints with `{ap.indicator}` ({ap.mechanism}) require auth → "
-                    f'set security: ["{scheme_name}"]. '
+                    f"set security: [{sec_obj}]. "
                     "Endpoints WITHOUT it are public → set security: []."
                 )
             else:  # group
                 sections.append(
                     f"Some endpoint groups use `{ap.indicator}` ({ap.mechanism}) → "
-                    f'set security: ["{scheme_name}"]. '
+                    f"set security: [{sec_obj}]. "
                     "Endpoints outside the group without auth are public → set security: []."
                 )
     elif not analysis.has_auth_imports and not analysis.auth_inference_notes:
@@ -133,7 +135,7 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str) -> str:
             "Without explicit per-endpoint markers (decorators, attributes, middleware), "
             "you cannot reliably determine which endpoints require auth. "
             "Default to security: [] (public) for all endpoints in this file. "
-            "Only set security: [\"BearerAuth\"] if the handler code itself "
+            'Only set security: [{"name": "BearerAuth", "scheme_type": "bearer"}] if the handler code itself '
             "explicitly checks credentials (reads a token, validates a claim, calls an auth service)."
         )
     else:

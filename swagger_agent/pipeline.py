@@ -268,6 +268,11 @@ def run_pipeline(
                 f"  {len(deduped_hints)} unique ref(s): "
                 f"{', '.join(h['ref_hint'] for h in deduped_hints)}"
             )
+        # Collect inline schemas from all descriptors
+        all_inline_schemas: dict[str, dict] = {}
+        for desc in descriptors:
+            all_inline_schemas.update(desc.inline_schemas)
+
         schemas, inheritance_map, name_mapping = run_schema_loop(
             ref_hints=deduped_hints,
             framework=manifest.framework,
@@ -276,6 +281,7 @@ def run_pipeline(
             console=console,
             event_callback=db.schema_event if db else None,
             telemetry=result.telemetry,
+            inline_schemas=all_inline_schemas or None,
         )
     else:
         if not db:

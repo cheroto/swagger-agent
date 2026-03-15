@@ -314,11 +314,11 @@ class PipelineDashboard(ScoutEventHandler):
         """
         with self._lock:
             for ep in descriptor.endpoints:
-                sec = ", ".join(ep.security) if ep.security else None
+                sec = ", ".join(s.name for s in ep.security) if ep.security else None
                 self._spec_endpoints.append((ep.method, ep.path, sec))
                 if ep.security:
                     for s in ep.security:
-                        self._spec_security_schemes.add(s)
+                        self._spec_security_schemes.add(s.name)
         self._refresh()
 
     def route_failed(self, file: str, error: str) -> None:

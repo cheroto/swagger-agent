@@ -110,7 +110,7 @@ def collect_ref_hints_from_descriptor(descriptor: EndpointDescriptor) -> list[di
         if ep.request_body and ep.request_body.schema_ref:
             refs.append(ep.request_body.schema_ref)
         for resp in ep.responses:
-            if resp.schema_ref and resp.schema_ref.ref_hint:
+            if resp.schema_ref and not resp.schema_ref.is_empty:
                 refs.append(resp.schema_ref)
 
         for ref in refs:
@@ -135,6 +135,7 @@ def run_schema_loop(
     max_depth: int = 10,
     event_callback: object | None = None,
     telemetry: Telemetry | None = None,
+    inline_schemas: dict[str, dict] | None = None,
 ) -> tuple[dict[str, dict], dict, dict[tuple[str, str], str]]:
     """Run the schema extraction loop until all $refs are resolved.
 
@@ -172,9 +173,9 @@ def run_schema_loop(
     # Maps (original_ref_hint, source_descriptor_file) → qualified schema name
     name_mapping: dict[tuple[str, str], str] = {}
 
-    # Inline properties from unresolvable ref_hints — used to build richer
+    # Inline schemas from endpoint descriptors — used to build richer
     # placeholders instead of bare {type: object} when resolution fails.
-    inline_props_by_name: dict[str, list[dict]] = {}
+    inline_schemas = inline_schemas or {}
     # Track LLM's resolution classification per ref name — if the LLM said
     # "unresolvable" and ctags confirms, no warning needed (expected behavior).
     llm_resolution_by_name: dict[str, str] = {}
@@ -193,10 +194,6 @@ def run_schema_loop(
         )
         source_file = hint.get("_source_file", "")
 
-        # Collect inline properties and resolution classification
-        props = hint.get("inline_properties", [])
-        if props:
-            inline_props_by_name.setdefault(raw_name, props)
         resolution = hint.get("resolution", "")
         if resolution:
             llm_resolution_by_name.setdefault(raw_name, resolution)
@@ -298,26 +295,13 @@ def run_schema_loop(
                                   f" (import: {import_source or 'none'})")
                 _emit("resolving", name=schema_name, file=None)
 
-                # Use inline properties from the LLM if available
-                props = inline_props_by_name.get(schema_name, [])
-                if props:
-                    schema_obj: dict = {
-                        "type": "object",
-                        "properties": {},
-                    }
-                    required_fields = []
-                    for p in props:
-                        pname = p.get("name", "") if isinstance(p, dict) else p.name
-                        ptype = p.get("type", "string") if isinstance(p, dict) else p.type
-                        preq = p.get("required", False) if isinstance(p, dict) else p.required
-                        schema_obj["properties"][pname] = {"type": ptype}
-                        if preq:
-                            required_fields.append(pname)
-                    if required_fields:
-                        schema_obj["required"] = required_fields
-                    all_schemas[schema_name] = schema_obj
+                # Use inline schemas from endpoint descriptors if available
+                inline_schema = inline_schemas.get(schema_name)
+                if inline_schema:
+                    all_schemas[schema_name] = inline_schema
                     if not quiet:
-                        console.print(f"    [cyan]Built from inline properties ({len(props)} fields)[/cyan]")
+                        prop_count = len(inline_schema.get("properties", {}))
+                        console.print(f"    [cyan]Built from inline schema ({prop_count} fields)[/cyan]")
                 else:
                     # If the LLM already classified this as "unresolvable",
                     # ctags failing is expected — don't flag as x-unresolved.

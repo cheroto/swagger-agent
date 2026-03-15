@@ -13,7 +13,6 @@ from swagger_agent.infra.assembler import (
     _reconcile_path_params,
     _replace_outside_braces,
     _sanitize_path_template,
-    _synthesize_polymorphism,
     assemble_spec,
 )
 from swagger_agent.models import (
@@ -24,6 +23,7 @@ from swagger_agent.models import (
     RefHint,
     RequestBody,
     Response,
+    SecurityRequirement,
 )
 
 
@@ -266,10 +266,52 @@ class TestEmptyRefGuard:
             )
         ]
         result = assemble_spec(manifest, descriptors, {})
-        # The response schema should be the inline placeholder, not a broken $ref
-        resp_schema = result.spec["paths"]["/api/test"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-        assert "$ref" not in resp_schema
-        assert resp_schema["x-unresolved"] is True
+        # An empty ref_hint should produce no content block (bodyless response)
+        resp = result.spec["paths"]["/api/test"]["get"]["responses"]["200"]
+        assert "content" not in resp, (
+            "Empty ref_hint should not produce a content block in the response"
+        )
+
+
+# --- Fix: RefHint.is_array produces array schema ---
+
+
+class TestRefHintIsArray:
+    def test_is_array_produces_array_schema(self):
+        """RefHint with is_array=True should produce array wrapper around $ref."""
+        from swagger_agent.infra.assembler import _build_schema_for_ref
+
+        ref = RefHint(ref_hint="Article", resolution="import", import_line="from app import Article", file_namespace="", is_array=True)
+        result = _build_schema_for_ref(ref)
+        assert result["type"] == "array"
+        assert result["items"] == {"$ref": "#/components/schemas/Article"}
+
+    def test_is_nullable_adds_nullable(self):
+        """RefHint with is_nullable=True should add nullable: true."""
+        from swagger_agent.infra.assembler import _build_schema_for_ref
+
+        ref = RefHint(ref_hint="User", resolution="import", import_line="from app import User", file_namespace="", is_nullable=True)
+        result = _build_schema_for_ref(ref)
+        assert result["$ref"] == "#/components/schemas/User"
+        assert result["nullable"] is True
+
+    def test_is_array_and_nullable_combined(self):
+        """Both is_array and is_nullable should produce nullable array."""
+        from swagger_agent.infra.assembler import _build_schema_for_ref
+
+        ref = RefHint(ref_hint="Tag", resolution="import", import_line="from app import Tag", file_namespace="", is_array=True, is_nullable=True)
+        result = _build_schema_for_ref(ref)
+        assert result["type"] == "array"
+        assert result["items"] == {"$ref": "#/components/schemas/Tag"}
+        assert result["nullable"] is True
+
+    def test_defaults_false_no_change(self):
+        """RefHint with defaults (is_array=False) should use _build_ref as before."""
+        from swagger_agent.infra.assembler import _build_schema_for_ref
+
+        ref = RefHint(ref_hint="User", resolution="import", import_line="from app import User", file_namespace="")
+        result = _build_schema_for_ref(ref)
+        assert result == {"$ref": "#/components/schemas/User"}
 
 
 # --- Integration: all fixes together ---
@@ -860,120 +902,3 @@ class TestNormalizeSchemaCase:
         assert not result.spec["components"]["schemas"]["ItemViewModel"].get("x-unresolved")
 
 
-# --- Feature: Polymorphism synthesis ---
-
-
-class TestSynthesizePolymorphism:
-    def test_oneof_added_for_subtypes(self):
-        from swagger_agent.infra.resolve import CtagsEntry
-        from pathlib import Path
-
-        spec = {
-            "components": {
-                "schemas": {
-                    "PaymentMethod": {
-                        "type": "object",
-                        "properties": {"type": {"type": "string"}},
-                    },
-                    "CreditCard": {
-                        "type": "object",
-                        "allOf": [{"$ref": "#/components/schemas/PaymentMethod"}],
-                    },
-                    "BankTransfer": {
-                        "type": "object",
-                        "allOf": [{"$ref": "#/components/schemas/PaymentMethod"}],
-                    },
-                }
-            }
-        }
-        inheritance_map = {
-            "PaymentMethod": [
-                CtagsEntry(name="CreditCard", path=Path("a.cs"), line=1, kind="record"),
-                CtagsEntry(name="BankTransfer", path=Path("b.cs"), line=1, kind="record"),
-            ],
-        }
-        _synthesize_polymorphism(spec, inheritance_map)
-        pm = spec["components"]["schemas"]["PaymentMethod"]
-        assert "oneOf" in pm
-        refs = [item["$ref"] for item in pm["oneOf"]]
-        assert "#/components/schemas/BankTransfer" in refs
-        assert "#/components/schemas/CreditCard" in refs
-
-    def test_discriminator_detected_from_enum(self):
-        from swagger_agent.infra.resolve import CtagsEntry
-        from pathlib import Path
-
-        spec = {
-            "components": {
-                "schemas": {
-                    "PaymentMethod": {
-                        "type": "object",
-                        "properties": {
-                            "kind": {
-                                "type": "string",
-                                "enum": ["CreditCard", "BankTransfer", "Crypto"],
-                            },
-                        },
-                    },
-                    "CreditCard": {"type": "object"},
-                    "BankTransfer": {"type": "object"},
-                }
-            }
-        }
-        inheritance_map = {
-            "PaymentMethod": [
-                CtagsEntry(name="CreditCard", path=Path("a.cs"), line=1, kind="record"),
-                CtagsEntry(name="BankTransfer", path=Path("b.cs"), line=1, kind="record"),
-            ],
-        }
-        _synthesize_polymorphism(spec, inheritance_map)
-        pm = spec["components"]["schemas"]["PaymentMethod"]
-        assert "discriminator" in pm
-        assert pm["discriminator"]["propertyName"] == "kind"
-
-    def test_no_oneof_when_subtypes_missing_from_spec(self):
-        from swagger_agent.infra.resolve import CtagsEntry
-        from pathlib import Path
-
-        spec = {
-            "components": {
-                "schemas": {
-                    "PaymentMethod": {
-                        "type": "object",
-                    },
-                }
-            }
-        }
-        inheritance_map = {
-            "PaymentMethod": [
-                CtagsEntry(name="CreditCard", path=Path("a.cs"), line=1, kind="record"),
-            ],
-        }
-        _synthesize_polymorphism(spec, inheritance_map)
-        assert "oneOf" not in spec["components"]["schemas"]["PaymentMethod"]
-
-    def test_existing_oneof_not_overwritten(self):
-        from swagger_agent.infra.resolve import CtagsEntry
-        from pathlib import Path
-
-        spec = {
-            "components": {
-                "schemas": {
-                    "PaymentMethod": {
-                        "type": "object",
-                        "oneOf": [{"$ref": "#/components/schemas/Manual"}],
-                    },
-                    "CreditCard": {"type": "object"},
-                }
-            }
-        }
-        inheritance_map = {
-            "PaymentMethod": [
-                CtagsEntry(name="CreditCard", path=Path("a.cs"), line=1, kind="record"),
-            ],
-        }
-        _synthesize_polymorphism(spec, inheritance_map)
-        # Should keep the existing oneOf
-        pm = spec["components"]["schemas"]["PaymentMethod"]
-        assert len(pm["oneOf"]) == 1
-        assert pm["oneOf"][0]["$ref"] == "#/components/schemas/Manual"
