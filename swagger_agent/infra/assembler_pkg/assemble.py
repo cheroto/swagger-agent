@@ -305,6 +305,14 @@ def assemble_spec(
             if path_key not in spec["paths"]:
                 spec["paths"][path_key] = {}
 
+            # Skip duplicate methods on the same path (keep first)
+            if method in spec["paths"][path_key]:
+                logger.warning(
+                    "Duplicate %s %s (operationId=%s) — keeping first, skipping duplicate",
+                    method.upper(), path_key, ep.operation_id,
+                )
+                continue
+
             spec["paths"][path_key][method] = _build_operation(ep, ref_rewrite)
 
             # Track referenced schema names (using rewritten names)

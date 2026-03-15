@@ -79,8 +79,15 @@ def _normalize_path(base_path: str, endpoint_path: str) -> str:
     if not full.startswith("/"):
         full = "/" + full
 
+    # Convert framework-specific param syntax to OpenAPI {param}:
+    # Express/Sinatra:  :param
     full = _replace_outside_braces(full, r":(\w+)", r"{\1}")
+    # Flask typed:      <int:param>, <string:param>, <uuid:param>
+    full = re.sub(r"<\w+:(\w+)>", r"{\1}", full)
+    # Flask untyped:    <param>
     full = re.sub(r"<(\w+)>", r"{\1}", full)
+    # Corrupted Flask:  <int{param}> (LLM merges type and brace)
+    full = re.sub(r"<\w+\{(\w+)\}>", r"{\1}", full)
 
     full = _sanitize_path_template(full)
     return full

@@ -210,6 +210,14 @@ def _sanitize_schemas(obj: object) -> None:
         if "required" in obj and obj["required"] == []:
             del obj["required"]
 
+        # Fix minimum/maximum on string types — should be minLength/maxLength.
+        # LLMs often confuse numeric constraints with string length constraints.
+        if obj.get("type") == "string":
+            if "minimum" in obj and "minLength" not in obj:
+                obj["minLength"] = int(obj.pop("minimum"))
+            if "maximum" in obj and "maxLength" not in obj:
+                obj["maxLength"] = int(obj.pop("maximum"))
+
         for v in obj.values():
             _sanitize_schemas(v)
     elif isinstance(obj, list):
