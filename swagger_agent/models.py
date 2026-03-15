@@ -103,7 +103,7 @@ class RequestBody(BaseModel):
 class Response(BaseModel):
     status_code: str = Field(description="HTTP status code: '200', '201', '401', '403', '404', '422'. POST that creates → 201, DELETE → 200/204, GET/PUT/PATCH → 200. Auth endpoints must have 401. Path param endpoints should have 404.")
     description: str = ""
-    schema_ref: RefHint | None = Field(default=None, description="Type reference for the response body. None if response has no body (e.g. 204, 401 with no detail).")
+    schema_ref: RefHint = Field(description="Type reference for the response body. Always provide — use resolution='unresolvable' with a descriptive ref_hint for the response type. For bodyless responses (204, 401 with no detail), use ref_hint='' with resolution='unresolvable'.")
 
 
 class Endpoint(BaseModel):

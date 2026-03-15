@@ -110,7 +110,7 @@ def collect_ref_hints_from_descriptor(descriptor: EndpointDescriptor) -> list[di
         if ep.request_body and ep.request_body.schema_ref:
             refs.append(ep.request_body.schema_ref)
         for resp in ep.responses:
-            if resp.schema_ref:
+            if resp.schema_ref and resp.schema_ref.ref_hint:
                 refs.append(resp.schema_ref)
 
         for ref in refs:

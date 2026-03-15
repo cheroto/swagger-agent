@@ -232,7 +232,7 @@ def _build_operation(
         responses: dict = {}
         for resp in ep.responses:
             entry: dict = {"description": resp.description or f"Response {resp.status_code}"}
-            if resp.schema_ref:
+            if resp.schema_ref.ref_hint:
                 entry["content"] = {
                     "application/json": {
                         "schema": _build_schema_for_ref(resp.schema_ref, ref_rewrite),
@@ -318,7 +318,7 @@ def assemble_spec(
             # Track referenced schema names (using rewritten names)
             for ref_source in (
                 [ep.request_body.schema_ref] if ep.request_body and ep.request_body.schema_ref else []
-            ) + [resp.schema_ref for resp in ep.responses if resp.schema_ref]:
+            ) + [resp.schema_ref for resp in ep.responses if resp.schema_ref.ref_hint]:
                 hint_name = ref_source.ref_hint
                 if ref_rewrite:
                     hint_name = ref_rewrite.get(hint_name, hint_name)
