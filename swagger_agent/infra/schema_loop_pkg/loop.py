@@ -172,6 +172,10 @@ def run_schema_loop(
     # Maps (original_ref_hint, source_descriptor_file) → qualified schema name
     name_mapping: dict[tuple[str, str], str] = {}
 
+    # Inline properties from unresolvable ref_hints — used to build richer
+    # placeholders instead of bare {type: object} when resolution fails.
+    inline_props_by_name: dict[str, list[dict]] = {}
+
     # 1. Pre-resolve ref_hints to detect name collisions
     #    When the same type name resolves to different files from different
     #    import contexts, each gets a unique qualified name.
@@ -185,6 +189,12 @@ def run_schema_loop(
             or None
         )
         source_file = hint.get("_source_file", "")
+
+        # Collect inline properties for unresolvable types
+        props = hint.get("inline_properties", [])
+        if props:
+            inline_props_by_name.setdefault(raw_name, props)
+
         inner_names = _decompose_type_hint(raw_name)
         if not inner_names:
             logger.info("Skipping builtin type hint: %s", raw_name)
@@ -281,11 +291,33 @@ def run_schema_loop(
                     console.print(f"  [red]Could not resolve[/red] {schema_name}"
                                   f" (import: {import_source or 'none'})")
                 _emit("resolving", name=schema_name, file=None)
-                all_schemas[schema_name] = {
-                    "type": "object",
-                    "description": "Schema could not be resolved from source code.",
-                    "x-unresolved": True,
-                }
+
+                # Use inline properties from the LLM if available
+                props = inline_props_by_name.get(schema_name, [])
+                if props:
+                    schema_obj: dict = {
+                        "type": "object",
+                        "properties": {},
+                    }
+                    required_fields = []
+                    for p in props:
+                        pname = p.get("name", "") if isinstance(p, dict) else p.name
+                        ptype = p.get("type", "string") if isinstance(p, dict) else p.type
+                        preq = p.get("required", False) if isinstance(p, dict) else p.required
+                        schema_obj["properties"][pname] = {"type": ptype}
+                        if preq:
+                            required_fields.append(pname)
+                    if required_fields:
+                        schema_obj["required"] = required_fields
+                    all_schemas[schema_name] = schema_obj
+                    if not quiet:
+                        console.print(f"    [cyan]Built from inline properties ({len(props)} fields)[/cyan]")
+                else:
+                    all_schemas[schema_name] = {
+                        "type": "object",
+                        "description": "Schema could not be resolved from source code.",
+                        "x-unresolved": True,
+                    }
                 continue
 
             file_key = str(file_path)

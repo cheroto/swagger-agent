@@ -9,11 +9,19 @@ from pydantic import BaseModel, Field
 # --- Ref Hints ---
 
 
+class InlineProperty(BaseModel):
+    """A single property observed in inline validation or anonymous type definitions."""
+    name: str = Field(description="Property name as it appears in the validation/type definition.")
+    type: str = Field(description="JSON Schema type: 'string', 'integer', 'number', 'boolean', 'array', 'object'.")
+    required: bool = Field(description="True if the property is marked as required in the validation code.")
+
+
 class RefHint(BaseModel):
     ref_hint: str = Field(description="Type name as it appears in code. Use the inner type only, strip collection wrappers: List<Article> → 'Article'.")
     resolution: Literal["import", "class_to_file", "unresolvable"] = Field(description="'import' = found the import/require/using statement for this type's package — provide import_line. 'class_to_file' = same namespace/package, no explicit import needed. 'unresolvable' = framework/language builtin (Response, IActionResult, int, string) or external package type.")
     import_line: str = Field(default="", description="The exact import/require/using statement. Only meaningful when resolution='import'. Empty string otherwise.")
     file_namespace: str = Field(default="", description="The namespace/package/module declaration of the current file (e.g. 'namespace Conduit.Features.Articles;', 'package com.example.users;'). Helps disambiguate same-name types across packages.")
+    inline_properties: list[InlineProperty] = Field(default_factory=list, description="When resolution='unresolvable' AND the type's shape is visible in validation code (Joi schema, inline object type, struct literal, class-validator decorators), list each property here. Empty list when the type is importable or its shape is not visible in this file.")
 
 
 # --- Discovery Manifest ---
