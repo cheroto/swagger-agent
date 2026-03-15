@@ -175,6 +175,9 @@ def run_schema_loop(
     # Inline properties from unresolvable ref_hints — used to build richer
     # placeholders instead of bare {type: object} when resolution fails.
     inline_props_by_name: dict[str, list[dict]] = {}
+    # Track LLM's resolution classification per ref name — if the LLM said
+    # "unresolvable" and ctags confirms, no warning needed (expected behavior).
+    llm_resolution_by_name: dict[str, str] = {}
 
     # 1. Pre-resolve ref_hints to detect name collisions
     #    When the same type name resolves to different files from different
@@ -190,10 +193,13 @@ def run_schema_loop(
         )
         source_file = hint.get("_source_file", "")
 
-        # Collect inline properties for unresolvable types
+        # Collect inline properties and resolution classification
         props = hint.get("inline_properties", [])
         if props:
             inline_props_by_name.setdefault(raw_name, props)
+        resolution = hint.get("resolution", "")
+        if resolution:
+            llm_resolution_by_name.setdefault(raw_name, resolution)
 
         inner_names = _decompose_type_hint(raw_name)
         if not inner_names:
@@ -313,11 +319,18 @@ def run_schema_loop(
                     if not quiet:
                         console.print(f"    [cyan]Built from inline properties ({len(props)} fields)[/cyan]")
                 else:
-                    all_schemas[schema_name] = {
-                        "type": "object",
-                        "description": "Schema could not be resolved from source code.",
-                        "x-unresolved": True,
-                    }
+                    # If the LLM already classified this as "unresolvable",
+                    # ctags failing is expected — don't flag as x-unresolved.
+                    # Only flag when the LLM expected resolution (import/class_to_file).
+                    llm_res = llm_resolution_by_name.get(schema_name, "")
+                    if llm_res == "unresolvable":
+                        all_schemas[schema_name] = {"type": "object"}
+                    else:
+                        all_schemas[schema_name] = {
+                            "type": "object",
+                            "description": "Schema could not be resolved from source code.",
+                            "x-unresolved": True,
+                        }
                 continue
 
             file_key = str(file_path)
