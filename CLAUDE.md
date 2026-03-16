@@ -434,6 +434,10 @@ The script expects pipeline output JSON files with a `spec` key containing the a
 
 Output is a table with per-repo metrics + averages, followed by detailed missing/extra items for repos with issues.
 
+## Instructor Mode
+
+Use `INSTRUCTOR_MODE=json_schema` in `.env` for local models (llamacpp, vllm, etc.). This uses grammar-level constrained decoding — the server physically cannot produce output that doesn't match the Pydantic schema. The `tools` mode uses OpenAI-style tool/function calling which causes deterministic "multiple tool calls" crashes on some files with llamacpp + qwen models. The `json` mode works but doesn't enforce the schema structurally. `json_schema` is the only mode that guarantees valid output from local inference.
+
 ## LLM Cache
 
 The `--cache` flag stores LLM responses in `.cache/llm/` keyed by a SHA-256 hash of (model, temperature, endpoint, full prompt content). Cache entries auto-invalidate when any input changes since the hash changes — including prompt changes, schema model changes, or config changes. **Never clear the cache unless the user explicitly asks for it.** There is no scenario where proactive cache clearing is justified — the hash-based design handles invalidation automatically.
