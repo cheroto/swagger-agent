@@ -10,6 +10,15 @@ from swagger_agent.models import Endpoint, Parameter
 logger = logging.getLogger("swagger_agent.assembler")
 
 
+def normalize_path_template(path: str) -> str:
+    """Normalize path template for identity comparison.
+
+    Replaces all {param} with {_} so that /api/{slug} and /api/{id}
+    are recognized as the same OAS path (OAS 3.0 considers them identical).
+    """
+    return re.sub(r"\{[^}]+\}", "{_}", path)
+
+
 def _replace_outside_braces(path: str, pattern: str, repl: str) -> str:
     """Apply a regex substitution only to text outside of {...} segments."""
     result: list[str] = []

@@ -163,7 +163,7 @@ def _coerce_to_schema(value: object) -> dict:
     if isinstance(value, (int, float)):
         return {"type": "number"}
     if isinstance(value, list):
-        return {"type": "array"}
+        return {"type": "array", "items": {"type": "string"}}
     return {"type": "object"}
 
 
@@ -226,15 +226,25 @@ def _sanitize_schemas(obj: object) -> None:
 
 
 def _fix_ref_siblings(schema: object) -> object:
-    """Wrap $ref + sibling keys with allOf (OpenAPI 3.0 requires it)."""
+    """Wrap $ref + sibling keys with allOf (OpenAPI 3.0 requires it).
+
+    Also ensures that 'nullable' always has an accompanying 'type' field,
+    since OAS 3.0 requires 'type' when 'nullable' is used.
+    """
     if isinstance(schema, dict):
         if "$ref" in schema and len(schema) > 1:
             ref = schema.pop("$ref")
             schema["allOf"] = [{"$ref": ref}]
+            # OAS 3.0: nullable requires type on the same node
+            if schema.get("nullable") and "type" not in schema:
+                schema["type"] = "object"
             for k, v in schema.items():
                 if k != "allOf":
                     schema[k] = _fix_ref_siblings(v)
         else:
+            # Fix standalone nullable without type (even without $ref)
+            if schema.get("nullable") and "type" not in schema and "allOf" in schema:
+                schema["type"] = "object"
             for k, v in schema.items():
                 schema[k] = _fix_ref_siblings(v)
     elif isinstance(schema, list):
@@ -362,6 +372,25 @@ def _replace_ref_in_schema(schema: dict, target_name: str) -> None:
                 _walk(item)
 
     _walk(schema)
+
+
+def _fix_array_missing_items(spec: dict) -> None:
+    """Add default 'items' to any 'type: array' node that lacks it.
+
+    OAS 3.0 requires 'items' when type is array. LLMs sometimes omit it.
+    """
+    def _walk(obj: object) -> None:
+        if isinstance(obj, dict):
+            if obj.get("type") == "array" and "items" not in obj:
+                logger.info("Adding default items to array schema missing 'items'")
+                obj["items"] = {"type": "string"}
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                _walk(item)
+
+    _walk(spec)
 
 
 def _normalize_schema_case(spec: dict) -> None:

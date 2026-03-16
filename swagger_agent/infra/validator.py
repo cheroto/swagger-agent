@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
 
 from swagger_agent.models import (
     CompletenessChecklist,
@@ -71,14 +78,98 @@ def _collect_all_ref_targets(spec: dict) -> set[str]:
     return targets
 
 
-def validate_spec(spec: dict) -> ValidationResult:
-    """Validate an OpenAPI 3.0 spec using openapi-spec-validator plus custom checks.
+def _run_redocly(spec: dict) -> ValidationResult:
+    """Run redocly CLI for comprehensive OpenAPI validation.
 
-    Returns structural errors from the library and pentest-focused warnings.
+    Writes spec to a temp file, runs `npx @redocly/cli lint --format json`,
+    parses the structured output into errors and warnings.
     """
     result = ValidationResult()
 
-    # OpenAPI structural validation
+    # Find npx
+    npx = shutil.which("npx")
+    if not npx:
+        result.warnings.append("npx not found; skipping redocly validation")
+        return result
+
+    # Write spec to temp YAML file
+    tmp_dir = tempfile.mkdtemp(prefix="swagger-agent-validate-")
+    spec_path = Path(tmp_dir) / "openapi.yaml"
+    try:
+        spec_path.write_text(yaml.dump(spec, default_flow_style=False, sort_keys=False))
+
+        # Skip rules that are documentation concerns, not structural/security issues.
+        # Our generated specs won't have license info or summaries — that's fine.
+        skip_rules = [
+            "info-license",
+            "info-contact",
+            "operation-summary",
+            "tag-description",
+        ]
+        cmd = [npx, "--yes", "@redocly/cli", "lint", "--format", "json"]
+        for rule in skip_rules:
+            cmd.extend(["--skip-rule", rule])
+        cmd.append(str(spec_path))
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        # Redocly prints JSON to stdout (may have trailing text after the JSON)
+        stdout = proc.stdout.strip()
+        if not stdout:
+            if proc.returncode != 0:
+                result.warnings.append(
+                    f"redocly exited with code {proc.returncode} but no output"
+                )
+            return result
+
+        # Extract the JSON object from stdout (redocly appends summary text after it)
+        json_start = stdout.find("{")
+        json_end = stdout.rfind("}") + 1
+        if json_start == -1 or json_end == 0:
+            result.warnings.append("redocly produced no parseable JSON output")
+            return result
+
+        data = json.loads(stdout[json_start:json_end])
+        problems = data.get("problems", [])
+
+        for problem in problems:
+            severity = problem.get("severity", "error")
+            rule_id = problem.get("ruleId", "unknown")
+            message = problem.get("message", "")
+            location = problem.get("location", [{}])
+            pointer = location[0].get("pointer", "") if location else ""
+
+            formatted = f"[{rule_id}] {message}"
+            if pointer:
+                formatted += f" (at {pointer})"
+
+            if severity == "error":
+                result.errors.append(formatted)
+            else:
+                result.warnings.append(formatted)
+
+    except subprocess.TimeoutExpired:
+        result.warnings.append("redocly lint timed out after 60s")
+    except json.JSONDecodeError as e:
+        result.warnings.append(f"Failed to parse redocly JSON output: {e}")
+    except OSError as e:
+        result.warnings.append(f"Failed to run redocly: {e}")
+    finally:
+        # Clean up temp files
+        spec_path.unlink(missing_ok=True)
+        Path(tmp_dir).rmdir()
+
+    return result
+
+
+def _run_python_validator(spec: dict) -> ValidationResult:
+    """Fallback: run openapi-spec-validator Python library."""
+    result = ValidationResult()
     try:
         from openapi_spec_validator import validate
 
@@ -89,10 +180,36 @@ def validate_spec(spec: dict) -> ValidationResult:
         )
     except Exception as e:
         result.errors.append(str(e))
+    return result
 
-    # Custom warnings: pentest-focused checks beyond spec validity
+
+def _find_array_without_items(spec: dict) -> list[str]:
+    """Walk the entire spec and find any 'type: array' node missing 'items'."""
+    issues: list[str] = []
+
+    def _walk(obj: object, path: str) -> None:
+        if isinstance(obj, dict):
+            if obj.get("type") == "array" and "items" not in obj:
+                issues.append(path)
+            for k, v in obj.items():
+                _walk(v, f"{path}/{k}")
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                _walk(v, f"{path}[{i}]")
+
+    _walk(spec, "#")
+    return issues
+
+
+def _run_custom_checks(spec: dict) -> ValidationResult:
+    """Pentest-focused checks beyond spec validity."""
+    result = ValidationResult()
     schemas = spec.get("components", {}).get("schemas", {})
     paths = spec.get("paths", {})
+
+    # type: array without items (OAS 3.0 requires items; redocly misses this)
+    for path in _find_array_without_items(spec):
+        result.errors.append(f"[array-items] 'type: array' missing required 'items' (at {path})")
 
     # Unresolved schemas
     for name, schema in schemas.items():
@@ -137,6 +254,40 @@ def validate_spec(spec: dict) -> ValidationResult:
                             )
 
     return result
+
+
+def validate_spec(spec: dict) -> ValidationResult:
+    """Validate an OpenAPI 3.0 spec using redocly CLI + custom pentest checks.
+
+    Uses redocly for comprehensive structural linting (unresolved refs, missing
+    security, missing responses, unused components, etc.). Falls back to
+    openapi-spec-validator Python library if redocly is unavailable.
+
+    Then runs custom pentest-focused checks (unresolved schemas, opaque bodies,
+    duplicate paths) on top.
+    """
+    # Primary: redocly CLI (comprehensive, multi-error)
+    redocly_result = _run_redocly(spec)
+
+    # If redocly produced no errors AND no warnings, it either succeeded cleanly
+    # or wasn't available. If it warned about not being available, fall back.
+    has_redocly = not any("npx not found" in w or "redocly" in w.lower()
+                         for w in redocly_result.warnings
+                         if "timed out" in w or "not found" in w or "no output" in w or "Failed" in w)
+
+    if not has_redocly:
+        # Fallback to Python library
+        fallback = _run_python_validator(spec)
+        redocly_result.errors.extend(fallback.errors)
+        redocly_result.warnings.extend(fallback.warnings)
+
+    # Always run custom pentest-focused checks (redocly doesn't know about
+    # x-unresolved, opaque bodies, or our duplicate path detection)
+    custom = _run_custom_checks(spec)
+    redocly_result.errors.extend(custom.errors)
+    redocly_result.warnings.extend(custom.warnings)
+
+    return redocly_result
 
 
 def check_completeness(

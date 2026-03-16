@@ -10,11 +10,12 @@ import yaml
 
 from swagger_agent.models import DiscoveryManifest, EndpointDescriptor, Endpoint, SecurityRequirement
 
-from .path_utils import _normalize_path, _reconcile_path_params
+from .path_utils import _normalize_path, _reconcile_path_params, normalize_path_template
 from .schema_fixups import (
     _break_ref_cycles,
     _deduplicate_operation_ids,
     _extract_refs_from_schema,
+    _fix_array_missing_items,
     _fix_leaked_ref_hints,
     _fix_ref_siblings,
     _normalize_schema_case,
@@ -173,7 +174,12 @@ def _build_schema_for_ref(ref_hint_obj, ref_rewrite: dict[str, str] | None = Non
         if getattr(ref_hint_obj, "is_array", False):
             inner = {"type": "array", "items": inner}
         if getattr(ref_hint_obj, "is_nullable", False):
-            inner["nullable"] = True
+            # OAS 3.0: nullable must be on a node with 'type'. If the node is a
+            # $ref, wrap in allOf so nullable sits on the wrapper object.
+            if "$ref" in inner:
+                inner = {"allOf": [{"$ref": inner.pop("$ref")}], "nullable": True}
+            else:
+                inner["nullable"] = True
         return inner
 
     return _build_ref(name)
@@ -318,6 +324,10 @@ def assemble_spec(
     # Paths and endpoints
     referenced_schemas: set[str] = set()
 
+    # Track normalized path templates to detect OAS-identical paths
+    # (e.g. /api/{slug} and /api/{id} are identical in OAS 3.0)
+    norm_to_canonical: dict[str, str] = {}
+
     for desc in descriptors:
         # Build per-descriptor ref rewrite map from name_mapping
         ref_rewrite: dict[str, str] | None = None
@@ -334,6 +344,18 @@ def assemble_spec(
 
             _reconcile_path_params(path_key, ep)
 
+            # Detect OAS-identical paths (same template, different param names)
+            norm_key = normalize_path_template(path_key)
+            if norm_key in norm_to_canonical and norm_to_canonical[norm_key] != path_key:
+                canonical = norm_to_canonical[norm_key]
+                logger.warning(
+                    "Path '%s' is identical to '%s' in OAS 3.0 (param names differ) — merging into '%s'",
+                    path_key, canonical, canonical,
+                )
+                path_key = canonical
+            else:
+                norm_to_canonical[norm_key] = path_key
+
             if path_key not in spec["paths"]:
                 spec["paths"][path_key] = {}
 
@@ -345,7 +367,18 @@ def assemble_spec(
                 )
                 continue
 
-            spec["paths"][path_key][method] = _build_operation(ep, ref_rewrite)
+            op = _build_operation(ep, ref_rewrite)
+
+            # Auto-inject 401/403 for protected endpoints missing error responses
+            if ep.security and len(ep.security) > 0:
+                responses = op.get("responses", {})
+                if "401" not in responses:
+                    responses["401"] = {"description": "Unauthorized"}
+                if "403" not in responses:
+                    responses["403"] = {"description": "Forbidden"}
+                op["responses"] = responses
+
+            spec["paths"][path_key][method] = op
 
             # Track referenced schema names (using rewritten names)
             for ref_source in (
@@ -403,6 +436,7 @@ def assemble_spec(
         _sanitize_schemas(schemas_dict)
         _fix_ref_siblings(schemas_dict)
     _break_ref_cycles(spec)
+    _fix_array_missing_items(spec)
     _normalize_schema_case(spec)
     _deduplicate_operation_ids(spec)
     if not spec["components"]["schemas"]:
