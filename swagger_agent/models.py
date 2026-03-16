@@ -56,7 +56,7 @@ class DiscoveryManifest(BaseModel):
 
 class EndpointSketch(BaseModel):
     """Lightweight endpoint identification from Phase 1."""
-    method: str = Field(description="HTTP method: GET, POST, PUT, PATCH, DELETE.")
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] = Field(description="HTTP method (uppercase).")
     path: str = Field(description="Full path as observed in code, including any router prefix.")
     handler_name: str = Field(description="The function or method name that handles this endpoint.")
 
@@ -65,8 +65,8 @@ class AuthPattern(BaseModel):
     """Observed auth mechanism from Phase 1."""
     mechanism: str = Field(description="How auth is applied: 'middleware in handler chain', 'decorator', 'annotation', 'dependency injection'.")
     indicator: str = Field(description="The exact code marker, e.g. 'auth.required', '@PreAuthorize', '[Authorize]', 'Depends(get_current_user)'.")
-    scheme_type: str = Field(description="Auth type: 'bearer', 'apikey', 'cookie', 'basic', 'oauth2', 'unknown'. Prefer the type explicitly declared in the source code (e.g., SecuritySchemeType.ApiKey → 'apikey', cookie_sessions → 'cookie') over inference from token format.")
-    applies_to: str = Field(description="Scope: 'all' (class/router level), 'per-endpoint', 'group' (middleware group).")
+    scheme_type: Literal["bearer", "apikey", "cookie", "basic", "oauth2", "unknown"] = Field(description="Auth type. Prefer the type explicitly declared in the source code (e.g., SecuritySchemeType.ApiKey → 'apikey', cookie_sessions → 'cookie') over inference from token format.")
+    applies_to: Literal["all", "per-endpoint", "group"] = Field(description="Scope: 'all' = class/router level applies to every endpoint, 'per-endpoint' = each endpoint explicitly marked, 'group' = middleware group wraps a subset of endpoints.")
 
 
 class CodeAnalysis(BaseModel):
@@ -105,7 +105,7 @@ class Parameter(BaseModel):
 
 
 class RequestBody(BaseModel):
-    content_type: str = Field(default="application/json", description="'application/json' for structured data, 'multipart/form-data' for file uploads, 'application/x-www-form-urlencoded' for form data.")
+    content_type: Literal["application/json", "multipart/form-data", "application/x-www-form-urlencoded"] = Field(default="application/json", description="'application/json' for structured data, 'multipart/form-data' for file uploads, 'application/x-www-form-urlencoded' for form data.")
     schema_ref: RefHint = Field(description="Type reference for the request body. Always provide — use resolution 'unresolvable' with a descriptive name if the type cannot be determined.")
 
 
@@ -146,7 +146,7 @@ class EndpointDescriptor(BaseModel):
 class SchemaProperty(BaseModel):
     """A single property on a data model / DTO / entity."""
     name: str = Field(description="Property name as serialized in JSON. Use the alias if a serialization annotation provides one (@JsonProperty, @SerializedName, alias=, CodingKeys). Skip fields with exclusion annotations (@JsonIgnore, [JsonIgnore], @Transient, @Expose(serialize:false)).")
-    type: str = Field(description="JSON Schema type: 'string', 'integer', 'number', 'boolean', 'array', 'object'. Use the base type even for references (use 'object' and set ref).")
+    type: Literal["string", "integer", "number", "boolean", "array", "object"] = Field(description="JSON Schema type. Use the base type even for references (use 'object' and set ref).")
     format: str = Field(default="", description="JSON Schema format when applicable: 'date-time', 'date', 'email', 'uuid', 'uri', 'binary', 'int64', 'float', 'double'. Empty string if none.")
     ref: str = Field(default="", description="Referenced schema name when this property is a complex type (another model/DTO). Empty for primitives. Use the class name only, not a full $ref path.")
     is_array: bool = Field(default=False, description="True if this property is a list/array/set of the type (List<User> → type='object', ref='User', is_array=True).")
