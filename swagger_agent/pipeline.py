@@ -59,6 +59,7 @@ def _prescan_to_manifest(prescan: PrescanResult, target_dir: str) -> DiscoveryMa
         route_files=prescan.route_files,
         servers=prescan.servers,
         base_path=prescan.base_path,
+        default_auth_mode=prescan.auth_mode or "",
         default_auth_hint=prescan.auth_context_hint,
     )
 
@@ -143,6 +144,7 @@ def run_pipeline(
         )
         # Propagate auth context from prescan (Scout doesn't discover auth)
         if prescan_result.auth_context_hint and not manifest.default_auth_hint:
+            manifest.default_auth_mode = prescan_result.auth_mode or ""
             manifest.default_auth_hint = prescan_result.auth_context_hint
         result.manifest = manifest
         result.timings["scout"] = (time.monotonic() - t0) * 1000
@@ -254,6 +256,7 @@ def run_pipeline(
             base_path=manifest.base_path,
             target_file=abs_path,
             mount_prefix=mount_prefix,
+            default_auth_mode=manifest.default_auth_mode,
             default_auth_hint=manifest.default_auth_hint,
         )
         try:

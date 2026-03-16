@@ -33,6 +33,7 @@ class RouteExtractorContext:
     base_path: str
     target_file: str
     mount_prefix: str = ""
+    default_auth_mode: str = ""  # "all", "per-endpoint", or ""
     default_auth_hint: str = ""
 
 
@@ -83,6 +84,8 @@ def run_route_extractor(
     }
     if context.mount_prefix:
         context_dict["mount_prefix"] = context.mount_prefix
+    if context.default_auth_mode:
+        context_dict["default_auth_mode"] = context.default_auth_mode
     context_json = json.dumps(context_dict, indent=2)
 
     user_message = (
@@ -163,7 +166,8 @@ def run_route_extractor(
 
     # 5. Phase 2: Endpoint Extraction
     phase2_prompt = build_phase2_prompt(
-        analysis, context.base_path, context.mount_prefix, context.default_auth_hint,
+        analysis, context.base_path, context.mount_prefix,
+        context.default_auth_hint, context.default_auth_mode,
     )
 
     logger.info("Phase 2: Extracting endpoints from %s", target_file)

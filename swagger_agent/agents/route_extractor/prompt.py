@@ -46,6 +46,7 @@ def build_phase2_prompt(
     base_path: str,
     mount_prefix: str = "",
     default_auth_hint: str = "",
+    default_auth_mode: str = "",
 ) -> str:
     """Build the Phase 2 extraction prompt from Phase 1 observations.
 
@@ -89,7 +90,7 @@ def build_phase2_prompt(
                 f"scheme: {scheme_name}/{scheme_type}, applies_to: {ap.applies_to}"
             )
     elif default_auth_hint:
-        sections.append("\n## Global Auth Context (from project, not this file)\n")
+        sections.append(f"\n## Global Auth Context (default_auth_mode={default_auth_mode})\n")
         sections.append(f"```\n{default_auth_hint}\n```")
     elif analysis.auth_inference_notes:
         sections.append("\n## Auth Inference Notes\n")

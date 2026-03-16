@@ -23,17 +23,29 @@ logger = logging.getLogger("swagger_agent.prescan")
 # Auth-related patterns to grep for in non-route files.
 # These are structural keywords that indicate global/default auth mechanisms.
 # Intentionally language-agnostic: simple keyword patterns, no framework dispatch.
-_AUTH_GREP_PATTERNS = [
-    re.compile(r"before_action\s+:auth", re.IGNORECASE),
-    re.compile(r"before_filter\s+:auth", re.IGNORECASE),
-    re.compile(r"skip_before_action\s+:auth", re.IGNORECASE),
-    re.compile(r"\bmiddleware\b.*\b(auth|jwt|bearer|token)\b", re.IGNORECASE),
-    re.compile(r"\[Authorize\]"),
-    re.compile(r"@PreAuthorize\b"),
-    re.compile(r"\.authorizeRequests\b|\.authorizeHttpRequests\b"),
-    re.compile(r"SecuritySchemeType\b"),
-    re.compile(r"passport\.(authenticate|use)\b", re.IGNORECASE),
-    re.compile(r"@UseGuards\b"),
+#
+# Each pattern is tagged with an auth mode:
+#   "all"          — global auth that applies to every endpoint by default
+#   "per-endpoint" — auth is opt-in, applied per endpoint via decorators/guards
+#   "skip"         — explicit exclusion from auth (modifies "all" mode)
+_AUTH_GREP_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # Global auth (default = all endpoints require auth)
+    (re.compile(r"before_action\s+:auth", re.IGNORECASE), "all"),
+    (re.compile(r"before_filter\s+:auth", re.IGNORECASE), "all"),
+    (re.compile(r"\.authorizeRequests\b|\.authorizeHttpRequests\b"), "all"),
+    # Per-endpoint auth (only marked endpoints require auth)
+    (re.compile(r"\[Authorize\]"), "per-endpoint"),
+    (re.compile(r"@PreAuthorize\b"), "per-endpoint"),
+    (re.compile(r"@UseGuards\b"), "per-endpoint"),
+    # Auth infrastructure (could be either — classified as context)
+    (re.compile(r"\bmiddleware\b.*\b(auth|jwt|bearer|token)\b", re.IGNORECASE), "all"),
+    (re.compile(r"SecuritySchemeType\b"), "per-endpoint"),
+    (re.compile(r"passport\.(authenticate|use)\b", re.IGNORECASE), "per-endpoint"),
+    # Skip patterns (explicit auth exclusion)
+    (re.compile(r"skip_before_action\s+:auth", re.IGNORECASE), "skip"),
+    (re.compile(r"\.except\s*\(", re.IGNORECASE), "skip"),
+    (re.compile(r"AllowAnonymous", re.IGNORECASE), "skip"),
+    (re.compile(r"permitAll", re.IGNORECASE), "skip"),
 ]
 
 
@@ -41,11 +53,13 @@ def _find_auth_context(
     target_dir: str,
     route_files: list[str],
     language: str | None,
-) -> str:
+) -> tuple[str, str]:
     """Grep for global auth patterns in non-route, non-test files.
 
-    Returns a short human-readable hint describing the auth mechanism found,
-    or empty string if nothing found. Purely deterministic — no LLM calls.
+    Returns (auth_mode, auth_hint):
+      - auth_mode: "all" | "per-endpoint" | "" — deterministic classification
+      - auth_hint: human-readable code snippets showing what was found
+    Purely deterministic — no LLM calls.
     """
     ext_map = {
         "javascript": "**/*.{js,ts}",
@@ -89,30 +103,40 @@ def _find_auth_context(
     # Search auth-named files first, then others (up to a limit)
     search_order = auth_candidates[:30] + other_candidates[:20]
 
-    matches: list[tuple[str, str]] = []  # (file, matched_line)
+    matches: list[tuple[str, str, str]] = []  # (file, matched_line, mode_tag)
     for rel_path in search_order:
         full = os.path.join(target_dir, rel_path)
         content = read_file_safe(full, max_bytes=16_000)
         if not content:
             continue
         for line in content.splitlines():
-            for pat in _AUTH_GREP_PATTERNS:
+            for pat, mode_tag in _AUTH_GREP_PATTERNS:
                 if pat.search(line):
-                    matches.append((rel_path, line.strip()))
+                    matches.append((rel_path, line.strip(), mode_tag))
                     break
-            if len(matches) >= 5:
+            if len(matches) >= 8:
                 break
-        if len(matches) >= 5:
+        if len(matches) >= 8:
             break
 
     if not matches:
-        return ""
+        return "", ""
+
+    # Determine auth mode from matched tags.
+    # "all" wins if any global auth pattern found (even alongside per-endpoint ones).
+    mode_tags = {m[2] for m in matches}
+    if "all" in mode_tags:
+        auth_mode = "all"
+    elif "per-endpoint" in mode_tags:
+        auth_mode = "per-endpoint"
+    else:
+        auth_mode = ""
 
     # Build a concise hint from the matches
     parts = []
-    for fpath, line in matches[:5]:
+    for fpath, line, _tag in matches[:8]:
         parts.append(f"{fpath}: {line}")
-    return "\n".join(parts)
+    return auth_mode, "\n".join(parts)
 
 
 def _find_importers(
@@ -238,11 +262,12 @@ def run_prescan(target_dir: str) -> PrescanResult:
         logger.info("Found %d importer(s) of route files: %s", len(importers), importers)
 
     # 4. Find global auth context
-    auth_hint = _find_auth_context(target_dir, result.route_files, lang)
+    auth_mode, auth_hint = _find_auth_context(target_dir, result.route_files, lang)
     if auth_hint:
+        result.auth_mode = auth_mode
         result.auth_context_hint = auth_hint
-        result.notes.append(f"Detected global auth context in {auth_hint.splitlines()[0].split(':')[0]}")
-        logger.info("Auth context detected: %s", auth_hint.splitlines()[0])
+        result.notes.append(f"Auth mode='{auth_mode}' from {auth_hint.splitlines()[0].split(':')[0]}")
+        logger.info("Auth context: mode=%s, first match: %s", auth_mode, auth_hint.splitlines()[0])
 
     # 5. Find servers and base path
     servers, base_path, server_notes = find_servers(target_dir, fw, lang)

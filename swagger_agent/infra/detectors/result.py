@@ -12,7 +12,8 @@ class PrescanResult:
     route_files: list[str] = field(default_factory=list)
     servers: list[str] = field(default_factory=list)
     base_path: str = ""
-    auth_context_hint: str = ""
+    auth_mode: str = ""       # "all", "per-endpoint", or "" — deterministic from prescan
+    auth_context_hint: str = ""  # raw code snippets for LLM context
     notes: list[str] = field(default_factory=list)
 
 

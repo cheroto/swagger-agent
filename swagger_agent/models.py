@@ -48,7 +48,8 @@ class DiscoveryManifest(BaseModel):
     route_files: list[str] = []
     servers: list[str] = []
     base_path: str = ""
-    default_auth_hint: str = Field(default="", description="Project-wide auth mechanism detected in base controllers, middleware configs, or security filters. Describes how auth is applied globally so the Route Extractor can infer per-endpoint auth even when the route file has no auth markers. Empty if no global auth detected.")
+    default_auth_mode: Literal["all", "per-endpoint", "none", ""] = Field(default="", description="How auth is applied project-wide, determined by infrastructure: 'all' = every endpoint requires auth by default (global middleware, base class before_action), 'per-endpoint' = auth is opt-in via decorators/guards on individual endpoints, 'none' = no auth detected, '' = unknown.")
+    default_auth_hint: str = Field(default="", description="Raw code snippets showing auth patterns found in the project. Provides context for the auth mode classification.")
 
 
 # --- Code Analysis (Route Extractor Phase 1) ---
@@ -120,7 +121,7 @@ class Endpoint(BaseModel):
     path: str = Field(description="Full path including base_path. Use OpenAPI parameter syntax {param} — convert from framework syntax (:param → {param}, <param> → {param}, <int:param> → {param}). Strip route constraints, optional markers, catch-all prefixes.")
     operation_id: str = Field(description="Derived from the handler function name (e.g. 'getUser', 'create_article').")
     tags: list[str] = Field(default_factory=list, description="Grouping tags derived from controller/router name, e.g. ['Articles'].")
-    security: list[SecurityRequirement] = Field(default_factory=list, description="Security requirements. [] = explicitly public (no auth). Always set, never omit. Determine auth from per-endpoint markers in the code (decorators, middleware, guards). When a global auth context is provided but no per-endpoint markers exist: set auth on state-changing endpoints (POST/PUT/PATCH/DELETE on resources) and private data access; set [] on login/register/password-reset, health/docs/version, and public read-only listings. Endpoints with explicit skip/exclude/AllowAnonymous/permitAll markers are always public. When an auth wrapper has an 'optional' flag (e.g. optional=true), treat as public (security: []). When in doubt, prefer [] (public).")
+    security: list[SecurityRequirement] = Field(default_factory=list, description="Security requirements. [] = public (no auth). Always set, never omit. When context has default_auth_mode='all': set auth on EVERY endpoint UNLESS the auth context shows an explicit skip/exclude/except/AllowAnonymous/permitAll for this endpoint's controller — only those exceptions get []. When default_auth_mode='per-endpoint': set auth ONLY on endpoints with explicit auth markers (decorators, guards, middleware) in the code; all others get []. When default_auth_mode is empty or 'none': set [] unless the code explicitly requires auth. Auth wrappers with 'optional' flag (e.g. optional=true) always get [].")
     parameters: list[Parameter] = Field(default_factory=list)
     request_body: RequestBody | None = Field(default=None, description="Include for any endpoint that consumes a request body. For POST/PUT/PATCH with unknown body shape, provide with schema_ref resolution='unresolvable'. Set null ONLY for bodyless endpoints (GET, DELETE, state toggles).")
     request_body_reason: str = Field(default="", description="When request_body is null on POST/PUT/PATCH, explain why: 'state toggle', 'action endpoint', 'webhook callback', 'no body evidence in code'. Empty string when request_body is provided or method is GET/DELETE.")
