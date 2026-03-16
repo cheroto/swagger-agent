@@ -5,6 +5,9 @@
     {"method": "POST", "path": "/users", "has_auth": false},
     {"method": "GET", "path": "/metrics", "has_auth": false}
   ],
-  "schemas": ["User", "CreateUserRequest", "UpdateUserRequest"],
+  "schemas": [
+    {"name": "User", "properties": ["name", "email"]},
+    {"name": "EntityUser", "properties": ["id", "value"]}
+  ],
   "security_schemes": []
 }

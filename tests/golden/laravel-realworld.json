@@ -1,122 +1,45 @@
 {
   "endpoints": [
-    {
-      "method": "POST",
-      "path": "/users/login",
-      "has_auth": false
-    },
-    {
-      "method": "POST",
-      "path": "/users",
-      "has_auth": false
-    },
-    {
-      "method": "GET",
-      "path": "/user",
-      "has_auth": true
-    },
-    {
-      "method": "PUT",
-      "path": "/user",
-      "has_auth": true
-    },
-    {
-      "method": "PATCH",
-      "path": "/user",
-      "has_auth": true
-    },
-    {
-      "method": "GET",
-      "path": "/profiles/{user}",
-      "has_auth": false
-    },
-    {
-      "method": "POST",
-      "path": "/profiles/{user}/follow",
-      "has_auth": true
-    },
-    {
-      "method": "DELETE",
-      "path": "/profiles/{user}/follow",
-      "has_auth": true
-    },
-    {
-      "method": "GET",
-      "path": "/articles",
-      "has_auth": false
-    },
-    {
-      "method": "POST",
-      "path": "/articles",
-      "has_auth": true
-    },
-    {
-      "method": "GET",
-      "path": "/articles/feed",
-      "has_auth": true
-    },
-    {
-      "method": "GET",
-      "path": "/articles/{article}",
-      "has_auth": false
-    },
-    {
-      "method": "PUT",
-      "path": "/articles/{article}",
-      "has_auth": true
-    },
-    {
-      "method": "PATCH",
-      "path": "/articles/{article}",
-      "has_auth": true
-    },
-    {
-      "method": "DELETE",
-      "path": "/articles/{article}",
-      "has_auth": true
-    },
-    {
-      "method": "GET",
-      "path": "/articles/{article}/comments",
-      "has_auth": false
-    },
-    {
-      "method": "POST",
-      "path": "/articles/{article}/comments",
-      "has_auth": true
-    },
-    {
-      "method": "DELETE",
-      "path": "/articles/{article}/comments/{comment}",
-      "has_auth": true
-    },
-    {
-      "method": "POST",
-      "path": "/articles/{article}/favorite",
-      "has_auth": true
-    },
-    {
-      "method": "DELETE",
-      "path": "/articles/{article}/favorite",
-      "has_auth": true
-    },
-    {
-      "method": "GET",
-      "path": "/tags",
-      "has_auth": false
-    }
+    {"method": "POST", "path": "/users/login", "has_auth": false},
+    {"method": "POST", "path": "/users", "has_auth": false},
+    {"method": "GET", "path": "/user", "has_auth": true},
+    {"method": "PUT", "path": "/user", "has_auth": true},
+    {"method": "PATCH", "path": "/user", "has_auth": true},
+    {"method": "GET", "path": "/profiles/{user}", "has_auth": false},
+    {"method": "POST", "path": "/profiles/{user}/follow", "has_auth": true},
+    {"method": "DELETE", "path": "/profiles/{user}/follow", "has_auth": true},
+    {"method": "GET", "path": "/articles", "has_auth": false},
+    {"method": "POST", "path": "/articles", "has_auth": true},
+    {"method": "GET", "path": "/articles/feed", "has_auth": true},
+    {"method": "GET", "path": "/articles/{article}", "has_auth": false},
+    {"method": "PUT", "path": "/articles/{article}", "has_auth": true},
+    {"method": "PATCH", "path": "/articles/{article}", "has_auth": true},
+    {"method": "DELETE", "path": "/articles/{article}", "has_auth": true},
+    {"method": "GET", "path": "/articles/{article}/comments", "has_auth": false},
+    {"method": "POST", "path": "/articles/{article}/comments", "has_auth": true},
+    {"method": "DELETE", "path": "/articles/{article}/comments/{comment}", "has_auth": true},
+    {"method": "POST", "path": "/articles/{article}/favorite", "has_auth": true},
+    {"method": "DELETE", "path": "/articles/{article}/favorite", "has_auth": true},
+    {"method": "GET", "path": "/tags", "has_auth": false}
   ],
   "schemas": [
-    "User",
-    "Article",
-    "Comment",
-    "Tag",
-    "Profile"
+    {"name": "User", "properties": ["id", "username", "email", "password", "bio", "image", "created_at", "updated_at"]},
+    {"name": "Article", "properties": ["id", "user_id", "slug", "title", "description", "body", "created_at", "updated_at"]},
+    {"name": "Comment", "properties": ["id", "user_id", "article_id", "body", "created_at", "updated_at"]},
+    {"name": "Tag", "properties": ["id", "name", "created_at", "updated_at"]},
+    {"name": "UserResponse", "properties": ["email", "token", "username", "bio", "image"]},
+    {"name": "ArticleResponse", "properties": ["slug", "title", "description", "body", "tagList", "createdAt", "updatedAt", "favorited", "favoritesCount", "author"]},
+    {"name": "CommentResponse", "properties": ["id", "body", "createdAt", "updatedAt", "author"]},
+    {"name": "ProfileResponse", "properties": ["username", "bio", "image", "following"]},
+    {"name": "Author", "properties": ["username", "bio", "image", "following"]},
+    {"name": "RegisterUserRequest", "properties": ["username", "email", "password"]},
+    {"name": "LoginUserRequest", "properties": ["email", "password"]},
+    {"name": "CreateArticleRequest", "properties": ["title", "description", "body", "tagList"]},
+    {"name": "UpdateArticleRequest", "properties": ["title", "description", "body"]},
+    {"name": "UpdateUserRequest", "properties": ["username", "email", "password", "bio", "image"]},
+    {"name": "CreateCommentRequest", "properties": ["body"]}
   ],
   "security_schemes": [
-    {
-      "name": "BearerAuth",
-      "type": "http"
-    }
+    {"name": "BearerAuth", "type": "http"}
   ]
 }

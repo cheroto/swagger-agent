@@ -14,7 +14,13 @@
     {"method": "PATCH", "path": "/v1/users/{id}", "has_auth": true},
     {"method": "DELETE", "path": "/v1/users/{id}", "has_auth": true}
   ],
-  "schemas": ["User", "Token"],
+  "schemas": [
+    {"name": "User", "properties": ["id", "email", "name", "role", "isEmailVerified"]},
+    {"name": "Token", "properties": ["token", "expires"]},
+    {"name": "AuthTokens", "properties": ["access", "refresh"]},
+    {"name": "Error", "properties": ["code", "message"]},
+    {"name": "UserListResponse", "properties": ["results", "page", "limit", "totalPages", "totalResults"]}
+  ],
   "security_schemes": [
     {"name": "BearerAuth", "type": "http"}
   ]

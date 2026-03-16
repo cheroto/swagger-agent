@@ -20,8 +20,34 @@
     {"method": "GET", "path": "/profiles/{username}", "has_auth": false},
     {"method": "GET", "path": "/tags", "has_auth": false}
   ],
-  "schemas": ["Person", "Article", "Comment", "Tag", "User", "Profile"],
+  "schemas": [
+    {"name": "Person", "properties": ["username", "email", "bio", "image"]},
+    {"name": "Article", "properties": ["slug", "title", "description", "body", "author", "comments", "favorited", "favoritesCount", "tagList", "createdAt", "updatedAt"]},
+    {"name": "Comment", "properties": ["id", "body", "author", "createdAt", "updatedAt"]},
+    {"name": "Tag", "properties": ["tagId"]},
+    {"name": "User", "properties": ["username", "email", "bio", "image", "token"]},
+    {"name": "Profile", "properties": ["username", "bio", "image", "following"]},
+    {"name": "ArticleEnvelope", "properties": ["article"]},
+    {"name": "ArticlesEnvelope", "properties": ["articles", "articlesCount"]},
+    {"name": "CommentEnvelope", "properties": ["comment"]},
+    {"name": "CommentsEnvelope", "properties": ["comments"]},
+    {"name": "UserEnvelope", "properties": ["user"]},
+    {"name": "ProfileEnvelope", "properties": ["profile"]},
+    {"name": "TagsEnvelope", "properties": ["tags"]},
+    {"name": "CreateUserData", "properties": ["username", "email", "password"]},
+    {"name": "LoginUserData", "properties": ["email", "password"]},
+    {"name": "EditUserData", "properties": ["username", "email", "password", "bio", "image"]},
+    {"name": "CreateArticleData", "properties": ["title", "description", "body", "tagList"]},
+    {"name": "EditArticleData", "properties": ["title", "description", "body", "tagList"]},
+    {"name": "EditModel", "properties": ["article"]},
+    {"name": "CreateCommentData", "properties": ["body"]},
+    {"name": "CreateCommentModel", "properties": ["comment"]},
+    {"name": "CreateUserCommand", "properties": ["user"]},
+    {"name": "LoginUserCommand", "properties": ["user"]},
+    {"name": "EditUserCommand", "properties": ["user"]},
+    {"name": "CreateArticleCommand", "properties": ["article"]}
+  ],
   "security_schemes": [
-    {"name": "BearerAuth", "type": "http"}
+    {"name": "Bearer", "type": "apiKey"}
   ]
 }

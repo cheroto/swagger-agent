@@ -22,7 +22,20 @@
     {"method": "GET", "path": "/auth/oauth2/authorize", "has_auth": true},
     {"method": "POST", "path": "/auth/oauth2/authorize", "has_auth": true}
   ],
-  "schemas": ["User", "Team", "TeamMember", "OAuth2Client"],
+  "schemas": [
+    {"name": "BaseUserSchema", "properties": ["id", "username", "first_name", "middle_name", "last_name"]},
+    {"name": "DetailedUserSchema", "properties": ["id", "username", "first_name", "middle_name", "last_name", "email", "created", "updated", "is_active", "is_regular_user", "is_admin"]},
+    {"name": "UserSignupFormSchema", "properties": ["recaptcha_server_key"]},
+    {"name": "BaseTeamSchema", "properties": ["id", "title"]},
+    {"name": "DetailedTeamSchema", "properties": ["id", "title", "members", "created", "updated"]},
+    {"name": "BaseTeamMemberSchema", "properties": ["team", "user", "is_leader"]},
+    {"name": "BaseOAuth2ClientSchema", "properties": ["user_id", "client_id", "client_type", "default_scopes", "redirect_uris"]},
+    {"name": "DetailedOAuth2ClientSchema", "properties": ["user_id", "client_id", "client_type", "default_scopes", "redirect_uris", "client_secret"]},
+    {"name": "AddUserParameters", "properties": ["id", "username", "first_name", "middle_name", "last_name", "email", "password", "recaptcha_key"]},
+    {"name": "CreateOAuth2ClientParameters", "properties": ["redirect_uris", "default_scopes"]},
+    {"name": "AddTeamMemberParameters", "properties": ["user_id", "is_leader"]},
+    {"name": "CreateTeamParameters", "properties": ["id", "title"]}
+  ],
   "security_schemes": [
     {"name": "OAuth2", "type": "oauth2"}
   ]

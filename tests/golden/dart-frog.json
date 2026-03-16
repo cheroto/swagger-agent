@@ -8,11 +8,16 @@
     {"method": "GET", "path": "/products/{id}", "has_auth": true},
     {"method": "PUT", "path": "/products/{id}", "has_auth": true},
     {"method": "DELETE", "path": "/products/{id}", "has_auth": true},
-    {"method": "GET", "path": "/profile", "has_auth": true},
-    {"method": "GET", "path": "/profile/{id}", "has_auth": true},
-    {"method": "GET", "path": "/profile/{id}/favorite", "has_auth": true}
+    {"method": "GET", "path": "/profile", "has_auth": false},
+    {"method": "GET", "path": "/profile/{id}", "has_auth": false},
+    {"method": "GET", "path": "/profile/{id}/favorite", "has_auth": false}
   ],
-  "schemas": ["User", "Product", "SignInBody", "SignUpBody"],
+  "schemas": [
+    {"name": "User", "properties": ["email", "password", "name", "image"]},
+    {"name": "Product", "properties": ["id", "name", "description", "price", "rating", "image", "brand", "stock", "category"]},
+    {"name": "SignInBody", "properties": ["email", "password"]},
+    {"name": "SignUpBody", "properties": ["email", "password", "name", "image"]}
+  ],
   "security_schemes": [
     {"name": "BearerAuth", "type": "http"}
   ]

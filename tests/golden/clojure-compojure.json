@@ -15,6 +15,11 @@
     {"method": "GET", "path": "/pizzas/{id}", "has_auth": false},
     {"method": "DELETE", "path": "/pizzas/{id}", "has_auth": false}
   ],
-  "schemas": ["Total", "Pizza", "NewPizza", "NewSingleToppingPizza", "Topping"],
+  "schemas": [
+    {"name": "Total", "properties": ["total"]},
+    {"name": "Pizza", "properties": ["id", "name", "price", "hot", "description", "toppings"]},
+    {"name": "NewPizza", "properties": ["name", "price", "hot", "description", "toppings"]},
+    {"name": "NewSingleToppingPizza", "properties": ["name", "price", "hot", "description", "toppings"]}
+  ],
   "security_schemes": []
 }

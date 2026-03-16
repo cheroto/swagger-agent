@@ -15,7 +15,13 @@
     {"method": "PATCH", "path": "/posts/{post_id}/comments/{id}", "has_auth": true},
     {"method": "DELETE", "path": "/posts/{post_id}/comments/{id}", "has_auth": true}
   ],
-  "schemas": ["User", "Post", "Comment"],
+  "schemas": [
+    {"name": "User", "properties": ["id", "email", "password_digest", "admin", "created_at", "updated_at"]},
+    {"name": "Post", "properties": ["id", "title", "content", "created_at", "updated_at"]},
+    {"name": "Comment", "properties": ["id", "name", "message", "post_id", "created_at", "updated_at"]},
+    {"name": "AuthResponse", "properties": ["auth_token"]},
+    {"name": "LoginRequest", "properties": ["email", "password"]}
+  ],
   "security_schemes": [
     {"name": "BearerAuth", "type": "http"}
   ]

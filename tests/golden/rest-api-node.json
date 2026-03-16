@@ -14,7 +14,10 @@
     {"method": "PUT", "path": "/projects/update/{id}", "has_auth": true},
     {"method": "DELETE", "path": "/projects/delete/{id}", "has_auth": true}
   ],
-  "schemas": ["User", "Project"],
+  "schemas": [
+    {"name": "User", "properties": ["username", "email", "password", "photo", "nickname"]},
+    {"name": "Project", "properties": ["project", "technologies", "description", "demoLink", "githubLink", "author", "authorLink", "status"]}
+  ],
   "security_schemes": [
     {"name": "BearerAuth", "type": "http"}
   ]

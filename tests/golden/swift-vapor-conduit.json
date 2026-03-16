@@ -9,7 +9,17 @@
     {"method": "POST", "path": "/api/articles", "has_auth": false},
     {"method": "GET", "path": "/api/articles/{id}", "has_auth": false}
   ],
-  "schemas": ["User", "Article"],
+  "schemas": [
+    {"name": "User", "properties": ["id", "email", "username", "password", "bio", "image", "createdAt", "updatedAt"]},
+    {"name": "UserPublic", "properties": ["email", "bio", "image"]},
+    {"name": "UserRegister", "properties": ["username", "email", "password"]},
+    {"name": "UserLogin", "properties": ["email", "password"]},
+    {"name": "UserAuthUser", "properties": ["email", "token", "username", "bio", "image"]},
+    {"name": "Article", "properties": ["id"]},
+    {"name": "RegisterForm", "properties": ["user"]},
+    {"name": "LoginForm", "properties": ["user"]},
+    {"name": "AuthUserResponse", "properties": ["user"]}
+  ],
   "security_schemes": [
     {"name": "BearerAuth", "type": "http"}
   ]

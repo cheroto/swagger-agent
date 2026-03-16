@@ -1,6 +1,7 @@
 {
   "endpoints": [
     {"method": "GET", "path": "/api", "has_auth": false},
+    {"method": "GET", "path": "/api/home", "has_auth": false},
     {"method": "POST", "path": "/api/users", "has_auth": false},
     {"method": "POST", "path": "/api/users/login", "has_auth": false},
     {"method": "GET", "path": "/api/products", "has_auth": false},
@@ -23,7 +24,26 @@
     {"method": "GET", "path": "/api/orders", "has_auth": true},
     {"method": "GET", "path": "/api/orders/{id}", "has_auth": true}
   ],
-  "schemas": ["User", "Product", "Comment", "Address", "Tag", "Category", "Order", "OrderItem", "Role"],
+  "schemas": [
+    {"name": "User", "properties": ["id", "created_at", "updated_at", "first_name", "last_name", "username", "email", "password"]},
+    {"name": "Product", "properties": ["id", "created_at", "updated_at", "name", "description", "slug", "price", "stock"]},
+    {"name": "Order", "properties": ["id", "created_at", "updated_at", "order_status", "tracking_number", "address_id", "user_id"]},
+    {"name": "OrderItem", "properties": ["id", "created_at", "updated_at", "order_id", "product_id", "slug", "product_name", "price", "quantity", "user_id"]},
+    {"name": "Comment", "properties": ["id", "created_at", "updated_at", "content", "rating", "product_id", "user_id"]},
+    {"name": "Category", "properties": ["id", "created_at", "updated_at", "name", "description", "slug"]},
+    {"name": "Tag", "properties": ["id", "created_at", "updated_at", "name", "description", "slug"]},
+    {"name": "Role", "properties": ["id", "created_at", "updated_at", "name", "description"]},
+    {"name": "Address", "properties": ["id", "created_at", "updated_at", "street_address", "city", "country", "zip_code", "first_name", "last_name", "user_id"]},
+    {"name": "RegisterRequestDto", "properties": ["username", "first_name", "last_name", "email", "password", "password_confirmation"]},
+    {"name": "LoginRequestDto", "properties": ["username", "password"]},
+    {"name": "CreateProduct", "properties": ["name", "description", "price", "stock"]},
+    {"name": "CreateTag", "properties": ["name", "description"]},
+    {"name": "CreateOrderRequestDto", "properties": ["first_name", "last_name", "country", "city", "street_address", "zip_code", "address_id", "cart_items"]},
+    {"name": "CreateComment", "properties": ["content"]},
+    {"name": "CreateAddress", "properties": ["first_name", "last_name", "country", "city", "address", "zip_code"]},
+    {"name": "BaseDto", "properties": ["success", "full_messages"]},
+    {"name": "ErrorDto", "properties": ["success", "full_messages", "errors"]}
+  ],
   "security_schemes": [
     {"name": "BearerAuth", "type": "http"}
   ]

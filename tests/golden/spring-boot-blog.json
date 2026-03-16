@@ -55,7 +55,37 @@
     {"method": "PUT", "path": "/api/todos/{id}/complete", "has_auth": true},
     {"method": "PUT", "path": "/api/todos/{id}/unComplete", "has_auth": true}
   ],
-  "schemas": ["User", "Post", "Comment", "Category", "Tag", "Album", "Photo", "Todo", "Role", "Address", "Company", "LoginRequest", "SignUpRequest", "ApiResponse", "JwtAuthenticationResponse"],
+  "schemas": [
+    {"name": "User", "properties": ["id", "firstName", "lastName", "username", "password", "email", "address", "phone", "website", "roles", "company", "createdAt", "updatedAt"]},
+    {"name": "Post", "properties": ["id", "title", "body", "category", "tags", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "Comment", "properties": ["id", "name", "email", "body", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "Category", "properties": ["id", "name", "posts", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "Tag", "properties": ["id", "name", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "Album", "properties": ["id", "title", "photo", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "Photo", "properties": ["id", "title", "url", "thumbnailUrl", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "Todo", "properties": ["id", "title", "completed", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "Role", "properties": ["id", "name"]},
+    {"name": "Address", "properties": ["street", "suite", "city", "zipcode", "geo"]},
+    {"name": "Company", "properties": ["name", "catchPhrase", "bs"]},
+    {"name": "Geo", "properties": ["lat", "lng"]},
+    {"name": "LoginRequest", "properties": ["usernameOrEmail", "password"]},
+    {"name": "SignUpRequest", "properties": ["firstName", "lastName", "username", "email", "password"]},
+    {"name": "ApiResponse", "properties": ["success", "message"]},
+    {"name": "JwtAuthenticationResponse", "properties": ["accessToken", "tokenType"]},
+    {"name": "PostRequest", "properties": ["title", "body", "categoryId", "tags"]},
+    {"name": "PostResponse", "properties": ["title", "body", "category", "tags"]},
+    {"name": "CommentRequest", "properties": ["body"]},
+    {"name": "AlbumRequest", "properties": ["id", "title", "user", "photo", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "AlbumResponse", "properties": ["id", "title", "user", "photo", "createdAt", "updatedAt", "createdBy", "updatedBy"]},
+    {"name": "PhotoRequest", "properties": ["title", "url", "thumbnailUrl", "albumId"]},
+    {"name": "PhotoResponse", "properties": ["id", "title", "url", "thumbnailUrl", "albumId"]},
+    {"name": "InfoRequest", "properties": ["street", "suite", "city", "zipcode", "companyName", "catchPhrase", "bs", "website", "phone", "lat", "lng"]},
+    {"name": "PagedResponse", "properties": ["content", "page", "size", "totalElements", "totalPages", "last"]},
+    {"name": "UserIdentityAvailability", "properties": ["available"]},
+    {"name": "UserProfile", "properties": ["id", "username", "firstName", "lastName", "joinedAt", "email", "address", "phone", "website", "company", "postCount"]},
+    {"name": "UserSummary", "properties": ["id", "username", "firstName", "lastName"]},
+    {"name": "ExceptionResponse", "properties": ["error", "status", "messages", "timestamp"]}
+  ],
   "security_schemes": [
     {"name": "BearerAuth", "type": "http"}
   ]

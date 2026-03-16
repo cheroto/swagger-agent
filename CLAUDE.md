@@ -380,6 +380,50 @@ What this means in practice:
 
 When evaluating any proposed solution, ask: "Does this work on a codebase I've never seen, in a framework I've never heard of?" If not, redesign it.
 
+## Golden Test Data & Scoring
+
+Manually curated ground truth in `tests/golden/` for evaluating pipeline output quality. Each `<repo>.json` contains expected endpoints, schemas, and security schemes for a target repo.
+
+**Golden file format:**
+
+```json
+{
+  "endpoints": [{"method": "POST", "path": "/api/users/{id}", "has_auth": true}],
+  "schemas": [
+    {"name": "User", "properties": ["id", "email", "username", "password"]},
+    {"name": "CreateUserRequest", "properties": ["email", "password"]}
+  ],
+  "security_schemes": [{"name": "BearerAuth", "type": "http"}]
+}
+```
+
+Schemas include **every schema the assembler should emit** — domain models, request DTOs, response DTOs, and envelope wrappers. Each schema lists its expected top-level property names for structural matching.
+
+**16 repos** covering diverse frameworks and languages: ASP.NET Core, Clojure Compojure, Dart Frog, Flask, Go Gin, Haskell Servant, Kotlin Ktor, Laravel, NestJS, Express (x2), OCaml Dream, Rust, Rails, Spring Boot, Swift Vapor.
+
+**Test repo location:** `tests/e2e/repos/` — all 16 golden repos (plus additional repos for other tests) live here. Do not look for them elsewhere.
+
+**Scoring** (`tests/golden/score.py`):
+
+```bash
+# Score all results in a directory
+python tests/golden/score.py /tmp/swagger-test/
+
+# Score a single repo (add --verbose for fuzzy match details)
+python tests/golden/score.py /tmp/swagger-test/rest-api-node.json --verbose
+```
+
+Computes four metrics per repo:
+
+- **Endpoint F1** (`EP-F1`): `(METHOD, normalized_path)` tuple equality. Path params collapsed to `{_}`.
+- **Schema F1** (`SC-F1`): Composite scoring with optimal (Hungarian algorithm) assignment. Each (actual, golden) schema pair is scored as `0.3 * token_name_similarity + 0.7 * property_dice_coefficient`. Name similarity uses Jaccard over word tokens (splits camelCase/snake_case), not character-level matching. Pairs above a 0.4 threshold are true positives, weighted by their match score (not binary) so F1 reflects extraction quality, not just detection. Schemas with `x-unresolved` are excluded.
+- **Security Scheme F1** (`SEC-F1`): Set match on `(name, type)` tuples from `components/securitySchemes`.
+- **Auth Accuracy** (`AUTH`): For endpoints present in both actual and golden, checks whether `has_auth` (true/false) agrees. Reports accuracy (correct/total) and lists mismatches (missing auth, spurious auth).
+
+The script expects pipeline output JSON files with a `spec` key containing the assembled OpenAPI spec. Filenames must match golden file names (e.g., `rest-api-node.json`).
+
+Output is a table with per-repo metrics + averages, followed by detailed missing/extra items for repos with issues.
+
 ## LLM Cache
 
 The `--cache` flag stores LLM responses in `.cache/llm/` keyed by a SHA-256 hash of (model, temperature, endpoint, full prompt content). Cache entries auto-invalidate when any input changes since the hash changes — including prompt changes, schema model changes, or config changes. **Never clear the cache unless the user explicitly asks for it.** There is no scenario where proactive cache clearing is justified — the hash-based design handles invalidation automatically.
