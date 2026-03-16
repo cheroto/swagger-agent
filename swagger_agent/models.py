@@ -88,7 +88,7 @@ class CodeAnalysis(BaseModel):
 
 
 class SecurityRequirement(BaseModel):
-    name: str = Field(description="Security scheme name (e.g. 'BearerAuth', 'OAuth2', 'ApiKeyAuth').")
+    name: Literal["BearerAuth", "ApiKeyAuth", "BasicAuth", "OAuth2", "CookieAuth"] = Field(description="Security scheme name. Must match the auth mechanism: BearerAuth for JWT/token, ApiKeyAuth for API keys, BasicAuth for HTTP Basic, OAuth2 for OAuth2 flows, CookieAuth for cookie/session auth.")
     scheme_type: Literal["bearer", "apikey", "basic", "oauth2", "cookie"] = Field(description="Auth mechanism: 'bearer' for JWT/token in Authorization header, 'apikey' for API key in header/query, 'basic' for HTTP Basic, 'oauth2' for OAuth2 flows, 'cookie' for cookie-based session auth.")
 
 
