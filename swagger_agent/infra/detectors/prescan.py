@@ -52,6 +52,10 @@ def _find_importers(
         parent = os.path.basename(os.path.dirname(rf))
         if parent:
             search_terms.add(f"{parent}/{stem}")
+        # Go package imports use the package directory name, not individual files.
+        # e.g. import "github.com/user/project/controllers" → search for package name
+        if rf.endswith(".go") and parent:
+            search_terms.add(parent)
 
     # Skip short terms that match too broadly
     search_terms = {t for t in search_terms if len(t) > 5}

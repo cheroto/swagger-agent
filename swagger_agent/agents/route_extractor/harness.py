@@ -105,7 +105,7 @@ def run_route_extractor(
         max_retries=config.instructor_max_retries,
         messages=p1_messages,
         temperature=config.llm_temperature,
-        max_tokens=4096,
+        max_tokens=config.llm_max_tokens,
         **config.extra_create_kwargs(),
     )
 

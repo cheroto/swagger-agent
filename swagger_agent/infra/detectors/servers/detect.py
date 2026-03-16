@@ -137,22 +137,23 @@ def find_servers(
                 if port:
                     break
 
-    # Check for base path in route files and entry points
+    # Check for base path in route files and entry points — collect all
+    # matches and pick the shortest (most general prefix).
     if language:
         glob_pat = _EXT_MAP_BP.get(language)
         if glob_pat:
+            all_bp_matches: list[tuple[str, str]] = []  # (base_path, source_file)
             candidates = glob_files(target_dir, glob_pat)
             for rel_path in candidates[:30]:
                 full = os.path.join(target_dir, rel_path)
                 content = read_file_safe(full, max_bytes=8000)
                 for pattern, _source in _BASE_PATH_PATTERNS:
-                    m = re.search(pattern, content)
-                    if m:
-                        base_path = m.group(1)
-                        notes.append(f"Found base path '{base_path}' in {rel_path}")
-                        break
-                if base_path:
-                    break
+                    for m in re.finditer(pattern, content):
+                        all_bp_matches.append((m.group(1), rel_path))
+            if all_bp_matches:
+                # Pick shortest match — most general prefix
+                base_path, bp_source = min(all_bp_matches, key=lambda x: len(x[0]))
+                notes.append(f"Found base path '{base_path}' in {bp_source} (from {len(all_bp_matches)} candidate(s))")
 
     # Build server URL
     if port is None and language:

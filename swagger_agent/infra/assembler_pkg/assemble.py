@@ -220,6 +220,8 @@ def _scheme_type_to_openapi(scheme_type: str) -> dict:
             "type": "oauth2",
             "flows": {"implicit": {"authorizationUrl": "", "scopes": {}}},
         }
+    if scheme_type == "cookie":
+        return {"type": "apiKey", "in": "cookie", "name": "session"}
     # Fallback for unknown types
     return {"type": "http", "scheme": "bearer"}
 

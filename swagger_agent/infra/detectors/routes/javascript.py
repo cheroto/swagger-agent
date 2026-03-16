@@ -4,7 +4,7 @@ from swagger_agent.infra.detectors.routes._base import RoutePattern
 
 PATTERNS: dict[str, list[RoutePattern]] = {
     "express": [
-        ("**/*.{js,ts}", r"(router|app)\.(get|post|put|patch|delete|all)\s*\("),
+        ("**/*.{js,ts}", r"(router|app)\.(get|post|put|patch|delete|all|route)\s*\("),
     ],
     "fastify": [
         ("**/*.{js,ts}", r"(fastify|app|server)\.(get|post|put|patch|delete|route)\s*\("),

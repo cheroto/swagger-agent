@@ -58,10 +58,13 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str, mount_prefix: st
     if mount_prefix:
         effective_prefix = effective_prefix + "/" + mount_prefix.strip("/")
     if analysis.base_prefix:
-        # Only add file-level prefix if it's not already covered by the effective prefix
+        # Only add file-level prefix if it's not already a suffix of effective_prefix by path segments
         file_prefix = analysis.base_prefix.strip("/")
-        if file_prefix and not effective_prefix.endswith(file_prefix):
-            effective_prefix = effective_prefix + "/" + file_prefix
+        if file_prefix:
+            eff_segments = effective_prefix.strip("/").split("/") if effective_prefix.strip("/") else []
+            file_segments = file_prefix.split("/")
+            if eff_segments[-len(file_segments):] != file_segments:
+                effective_prefix = effective_prefix + "/" + file_prefix
 
     prefix = effective_prefix or analysis.base_prefix or base_path
     if prefix:
@@ -75,7 +78,7 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str, mount_prefix: st
         sections.append("\n## Authentication\n")
         for ap in analysis.auth_patterns:
             scheme_name = _scheme_name_from_type(ap.scheme_type)
-            scheme_type = ap.scheme_type if ap.scheme_type in ("bearer", "apikey", "basic", "oauth2") else "bearer"
+            scheme_type = ap.scheme_type if ap.scheme_type in ("bearer", "apikey", "basic", "oauth2", "cookie") else "bearer"
             sec_obj = f'{{"name": "{scheme_name}", "scheme_type": "{scheme_type}"}}'
             if ap.applies_to == "all":
                 sections.append(
@@ -92,7 +95,11 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str, mount_prefix: st
                 sections.append(
                     f"Some endpoint groups use `{ap.indicator}` ({ap.mechanism}) → "
                     f"set security: [{sec_obj}]. "
-                    "Endpoints outside the group without auth are public → set security: []."
+                    "Endpoints outside the group without auth are public → set security: []. "
+                    "IMPORTANT: If the auth wrapper has an 'optional' flag "
+                    "(e.g. authenticate(optional=true), optional: true), "
+                    "the endpoints inside are PUBLIC (security: []) — optional auth "
+                    "means the endpoint works without credentials."
                 )
     elif not analysis.has_auth_imports and not analysis.auth_inference_notes:
         sections.append("\n## Authentication\n")

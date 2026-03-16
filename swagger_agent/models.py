@@ -88,7 +88,7 @@ class CodeAnalysis(BaseModel):
 
 class SecurityRequirement(BaseModel):
     name: str = Field(description="Security scheme name (e.g. 'BearerAuth', 'OAuth2', 'ApiKeyAuth').")
-    scheme_type: Literal["bearer", "apikey", "basic", "oauth2"] = Field(description="Auth mechanism: 'bearer' for JWT/token auth, 'apikey' for API key, 'basic' for HTTP Basic, 'oauth2' for OAuth2 flows.")
+    scheme_type: Literal["bearer", "apikey", "basic", "oauth2", "cookie"] = Field(description="Auth mechanism: 'bearer' for JWT/token in Authorization header, 'apikey' for API key in header/query, 'basic' for HTTP Basic, 'oauth2' for OAuth2 flows, 'cookie' for cookie-based session auth.")
 
 
 # --- Endpoint Descriptor ---
@@ -151,6 +151,7 @@ class SchemaProperty(BaseModel):
     is_array: bool = Field(default=False, description="True if this property is a list/array/set of the type (List<User> → type='object', ref='User', is_array=True).")
     nullable: bool = Field(default=False, description="True if this property accepts null/None/nil (Optional<T>, T?, T | null).")
     enum_values: list[str] = Field(default_factory=list, description="Enum values if this is an enum type, e.g. ['active', 'inactive', 'banned']. Empty list if not an enum.")
+    constraints: dict[str, object] = Field(default_factory=dict, description="Validation constraints from code annotations/decorators/validators. Use standard JSON Schema keywords: minLength, maxLength, pattern, minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, minItems, maxItems, uniqueItems. Example: {'minLength': 3, 'maxLength': 50, 'pattern': '^[a-zA-Z]+$'}. Empty dict if no constraints.")
 
 
 class ExtractedSchema(BaseModel):
@@ -212,6 +213,9 @@ def _property_to_json_schema(p: SchemaProperty) -> dict:
 
     if p.nullable:
         schema["nullable"] = True
+
+    if p.constraints:
+        schema.update(p.constraints)
 
     return schema
 

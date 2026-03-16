@@ -308,7 +308,11 @@ def run_schema_loop(
                     # Only flag when the LLM expected resolution (import/class_to_file).
                     llm_res = llm_resolution_by_name.get(schema_name, "")
                     if llm_res == "unresolvable":
-                        all_schemas[schema_name] = {"type": "object"}
+                        all_schemas[schema_name] = {
+                            "type": "object",
+                            "description": "Type marked unresolvable by extraction agent.",
+                            "x-unresolved": True,
+                        }
                     else:
                         all_schemas[schema_name] = {
                             "type": "object",
@@ -335,7 +339,8 @@ def run_schema_loop(
             file_text = file_path.read_text(encoding="utf-8", errors="replace")
             known_schemas = {
                 n: schemas_snapshot[n] for n in schemas_snapshot
-                if n in file_text and not schemas_snapshot[n].get("x-unresolved")
+                if re.search(rf'\b{re.escape(n)}\b', file_text)
+                and not schemas_snapshot[n].get("x-unresolved")
             }
 
             extraction_tasks.append((schema_name, file_path, known_schemas))

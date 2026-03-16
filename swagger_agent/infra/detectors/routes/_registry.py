@@ -17,11 +17,13 @@ from swagger_agent.infra.detectors.routes import (
     rust,
     php,
     csharp,
+    dart,
+    swift,
 )
 
 # Merge all per-language pattern dicts into one lookup.
 _ALL_PATTERNS: dict[str, list[RoutePattern]] = {}
-for _module in (javascript, python, java, go, ruby, rust, php, csharp):
+for _module in (javascript, python, java, go, ruby, rust, php, csharp, dart, swift):
     _ALL_PATTERNS.update(_module.PATTERNS)
 
 
