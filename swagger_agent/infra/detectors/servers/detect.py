@@ -27,8 +27,8 @@ _BASE_PATH_PATTERNS = [
     (r"app\.use\s*\(\s*['\"](/(?!docs|static|public|health|swagger)[a-zA-Z0-9/_-]+)['\"]", "source"),
     # FastAPI: app = FastAPI(root_path=...)
     (r"root_path\s*=\s*['\"](/[a-zA-Z0-9/_-]+)['\"]", "source"),
-    # FastAPI/Flask: prefix='...'
-    (r"prefix\s*=\s*['\"](/[a-zA-Z0-9/_-]+)['\"]", "source"),
+    # FastAPI/Flask/NestJS: prefix='...' or setGlobalPrefix('...')
+    (r"(?:prefix|setGlobalPrefix)\s*[\(=:]\s*['\"]/?([a-zA-Z0-9/_-]+)['\"]", "source"),
     # Spring: server.servlet.context-path=/api
     (r"context-path\s*=\s*(/[a-zA-Z0-9/_-]+)", "config"),
     # Generic
@@ -144,7 +144,15 @@ def find_servers(
         if glob_pat:
             all_bp_matches: list[tuple[str, str]] = []  # (base_path, source_file)
             candidates = glob_files(target_dir, glob_pat)
-            for rel_path in candidates[:30]:
+            # Prioritize entry point files where base paths are typically configured
+            entry_hints = ("main", "app", "server", "index", "program", "startup", "bootstrap", "kernel")
+            entry_files = [
+                f for f in candidates
+                if any(h in os.path.basename(f).lower() for h in entry_hints)
+            ]
+            other_files = [f for f in candidates if f not in set(entry_files)]
+            search_order = entry_files[:15] + other_files[:30]
+            for rel_path in search_order:
                 full = os.path.join(target_dir, rel_path)
                 content = read_file_safe(full, max_bytes=8000)
                 for pattern, _source in _BASE_PATH_PATTERNS:
@@ -153,6 +161,9 @@ def find_servers(
             if all_bp_matches:
                 # Pick shortest match — most general prefix
                 base_path, bp_source = min(all_bp_matches, key=lambda x: len(x[0]))
+                # Ensure leading /
+                if base_path and not base_path.startswith("/"):
+                    base_path = "/" + base_path
                 notes.append(f"Found base path '{base_path}' in {bp_source} (from {len(all_bp_matches)} candidate(s))")
 
     # Build server URL
