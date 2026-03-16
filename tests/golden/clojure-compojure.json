@@ -1,0 +1,20 @@
+{
+  "endpoints": [
+    {"method": "GET", "path": "/math/plus", "has_auth": false},
+    {"method": "POST", "path": "/math/minus", "has_auth": false},
+    {"method": "GET", "path": "/math/times/{x}/{y}", "has_auth": false},
+    {"method": "GET", "path": "/math/power", "has_auth": false},
+    {"method": "GET", "path": "/echo/request", "has_auth": false},
+    {"method": "GET", "path": "/echo/pizza", "has_auth": false},
+    {"method": "PUT", "path": "/echo/anonymous", "has_auth": false},
+    {"method": "GET", "path": "/echo/hello", "has_auth": false},
+    {"method": "POST", "path": "/echo/pizza", "has_auth": false},
+    {"method": "GET", "path": "/pizzas", "has_auth": false},
+    {"method": "POST", "path": "/pizzas", "has_auth": false},
+    {"method": "PUT", "path": "/pizzas", "has_auth": false},
+    {"method": "GET", "path": "/pizzas/{id}", "has_auth": false},
+    {"method": "DELETE", "path": "/pizzas/{id}", "has_auth": false}
+  ],
+  "schemas": ["Total", "Pizza", "NewPizza", "NewSingleToppingPizza", "Topping"],
+  "security_schemes": []
+}

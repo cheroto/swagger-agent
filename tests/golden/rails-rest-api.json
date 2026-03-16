@@ -1,0 +1,22 @@
+{
+  "endpoints": [
+    {"method": "POST", "path": "/register", "has_auth": false},
+    {"method": "POST", "path": "/login", "has_auth": false},
+    {"method": "GET", "path": "/posts", "has_auth": true},
+    {"method": "GET", "path": "/posts/{id}", "has_auth": true},
+    {"method": "POST", "path": "/posts", "has_auth": true},
+    {"method": "PUT", "path": "/posts/{id}", "has_auth": true},
+    {"method": "PATCH", "path": "/posts/{id}", "has_auth": true},
+    {"method": "DELETE", "path": "/posts/{id}", "has_auth": true},
+    {"method": "GET", "path": "/posts/{post_id}/comments", "has_auth": true},
+    {"method": "GET", "path": "/posts/{post_id}/comments/{id}", "has_auth": true},
+    {"method": "POST", "path": "/posts/{post_id}/comments", "has_auth": true},
+    {"method": "PUT", "path": "/posts/{post_id}/comments/{id}", "has_auth": true},
+    {"method": "PATCH", "path": "/posts/{post_id}/comments/{id}", "has_auth": true},
+    {"method": "DELETE", "path": "/posts/{post_id}/comments/{id}", "has_auth": true}
+  ],
+  "schemas": ["User", "Post", "Comment"],
+  "security_schemes": [
+    {"name": "BearerAuth", "type": "http"}
+  ]
+}

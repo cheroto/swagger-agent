@@ -1,0 +1,20 @@
+{
+  "endpoints": [
+    {"method": "GET", "path": "/", "has_auth": false},
+    {"method": "GET", "path": "/version", "has_auth": false},
+    {"method": "POST", "path": "/api/login", "has_auth": false},
+    {"method": "POST", "path": "/api/logout", "has_auth": true},
+    {"method": "GET", "path": "/api/user", "has_auth": true},
+    {"method": "POST", "path": "/api/sensor", "has_auth": true},
+    {"method": "GET", "path": "/api/sensor/{sensor_id}", "has_auth": true},
+    {"method": "DELETE", "path": "/api/sensor/{sensor_id}", "has_auth": true},
+    {"method": "POST", "path": "/api/sensor/{sensor_id}/readings", "has_auth": true},
+    {"method": "GET", "path": "/api/sensor/{sensor_id}/readings", "has_auth": true},
+    {"method": "POST", "path": "/sensor/upload", "has_auth": true}
+  ],
+  "schemas": ["User", "Sensor", "Reading", "LoginDoc", "SensorCreateDoc", "ReadingsCreateDoc", "ErrorDoc"],
+  "security_schemes": [
+    {"name": "CookieAuth", "type": "apiKey"},
+    {"name": "BearerAuth", "type": "http"}
+  ]
+}

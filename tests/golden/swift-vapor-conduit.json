@@ -1,0 +1,16 @@
+{
+  "endpoints": [
+    {"method": "GET", "path": "/api/users", "has_auth": false},
+    {"method": "POST", "path": "/api/users", "has_auth": false},
+    {"method": "GET", "path": "/api/users/{id}", "has_auth": false},
+    {"method": "POST", "path": "/api/users/login", "has_auth": false},
+    {"method": "GET", "path": "/api/user", "has_auth": true},
+    {"method": "GET", "path": "/api/articles", "has_auth": false},
+    {"method": "POST", "path": "/api/articles", "has_auth": false},
+    {"method": "GET", "path": "/api/articles/{id}", "has_auth": false}
+  ],
+  "schemas": ["User", "Article"],
+  "security_schemes": [
+    {"name": "BearerAuth", "type": "http"}
+  ]
+}

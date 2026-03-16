@@ -1,0 +1,21 @@
+{
+  "endpoints": [
+    {"method": "POST", "path": "/v1/auth/register", "has_auth": false},
+    {"method": "POST", "path": "/v1/auth/login", "has_auth": false},
+    {"method": "POST", "path": "/v1/auth/logout", "has_auth": false},
+    {"method": "POST", "path": "/v1/auth/refresh-tokens", "has_auth": false},
+    {"method": "POST", "path": "/v1/auth/forgot-password", "has_auth": false},
+    {"method": "POST", "path": "/v1/auth/reset-password", "has_auth": false},
+    {"method": "POST", "path": "/v1/auth/send-verification-email", "has_auth": true},
+    {"method": "POST", "path": "/v1/auth/verify-email", "has_auth": false},
+    {"method": "POST", "path": "/v1/users", "has_auth": true},
+    {"method": "GET", "path": "/v1/users", "has_auth": true},
+    {"method": "GET", "path": "/v1/users/{id}", "has_auth": true},
+    {"method": "PATCH", "path": "/v1/users/{id}", "has_auth": true},
+    {"method": "DELETE", "path": "/v1/users/{id}", "has_auth": true}
+  ],
+  "schemas": ["User", "Token"],
+  "security_schemes": [
+    {"name": "BearerAuth", "type": "http"}
+  ]
+}

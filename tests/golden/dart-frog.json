@@ -1,0 +1,19 @@
+{
+  "endpoints": [
+    {"method": "GET", "path": "/", "has_auth": false},
+    {"method": "POST", "path": "/auth/login", "has_auth": false},
+    {"method": "POST", "path": "/auth/register", "has_auth": false},
+    {"method": "GET", "path": "/products", "has_auth": true},
+    {"method": "POST", "path": "/products", "has_auth": true},
+    {"method": "GET", "path": "/products/{id}", "has_auth": true},
+    {"method": "PUT", "path": "/products/{id}", "has_auth": true},
+    {"method": "DELETE", "path": "/products/{id}", "has_auth": true},
+    {"method": "GET", "path": "/profile", "has_auth": true},
+    {"method": "GET", "path": "/profile/{id}", "has_auth": true},
+    {"method": "GET", "path": "/profile/{id}/favorite", "has_auth": true}
+  ],
+  "schemas": ["User", "Product", "SignInBody", "SignUpBody"],
+  "security_schemes": [
+    {"name": "BearerAuth", "type": "http"}
+  ]
+}

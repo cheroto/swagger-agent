@@ -1,0 +1,122 @@
+{
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/users/login",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/users",
+      "has_auth": false
+    },
+    {
+      "method": "GET",
+      "path": "/user",
+      "has_auth": true
+    },
+    {
+      "method": "PUT",
+      "path": "/user",
+      "has_auth": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/user",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/profiles/{user}",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/profiles/{user}/follow",
+      "has_auth": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/profiles/{user}/follow",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/articles",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/articles",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/articles/feed",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/articles/{article}",
+      "has_auth": false
+    },
+    {
+      "method": "PUT",
+      "path": "/articles/{article}",
+      "has_auth": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/articles/{article}",
+      "has_auth": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/articles/{article}",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/articles/{article}/comments",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/articles/{article}/comments",
+      "has_auth": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/articles/{article}/comments/{comment}",
+      "has_auth": true
+    },
+    {
+      "method": "POST",
+      "path": "/articles/{article}/favorite",
+      "has_auth": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/articles/{article}/favorite",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/tags",
+      "has_auth": false
+    }
+  ],
+  "schemas": [
+    "User",
+    "Article",
+    "Comment",
+    "Tag",
+    "Profile"
+  ],
+  "security_schemes": [
+    {
+      "name": "BearerAuth",
+      "type": "http"
+    }
+  ]
+}

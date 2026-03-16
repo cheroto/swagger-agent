@@ -1,0 +1,151 @@
+{
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/v1",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/register",
+      "has_auth": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/refresh",
+      "has_auth": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "has_auth": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/bootstrap-admin",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/forgot-password",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/reset-password",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/send-verification",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/verify-email",
+      "has_auth": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/profile",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/{id}",
+      "has_auth": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/users/{id}",
+      "has_auth": false
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/users/profile",
+      "has_auth": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/users/change-password",
+      "has_auth": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/users/{id}",
+      "has_auth": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/cities",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/cities",
+      "has_auth": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/cities/{id}",
+      "has_auth": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/cities/{id}",
+      "has_auth": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/cities/{id}",
+      "has_auth": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upload/image",
+      "has_auth": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upload/avatar",
+      "has_auth": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upload/profile-picture/{userId}",
+      "has_auth": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/upload/city-image/{cityId}",
+      "has_auth": true
+    }
+  ],
+  "schemas": [
+    "User",
+    "City",
+    "AuditLog",
+    "CreateUserDto",
+    "UpdateUserDto",
+    "UpdateProfileDto",
+    "ChangePasswordDto",
+    "CreateCityDto",
+    "UpdateCityDto"
+  ],
+  "security_schemes": [
+    {
+      "name": "BearerAuth",
+      "type": "http"
+    }
+  ]
+}

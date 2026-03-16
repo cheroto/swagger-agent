@@ -1,0 +1,21 @@
+{
+  "endpoints": [
+    {"method": "GET", "path": "/liveness_check", "has_auth": false},
+    {"method": "GET", "path": "/readiness_check", "has_auth": false},
+    {"method": "POST", "path": "/users/create", "has_auth": false},
+    {"method": "GET", "path": "/users", "has_auth": false},
+    {"method": "GET", "path": "/users/select/{id}", "has_auth": false},
+    {"method": "POST", "path": "/login", "has_auth": false},
+    {"method": "PUT", "path": "/users/update/{id}", "has_auth": true},
+    {"method": "DELETE", "path": "/users/delete/{id}", "has_auth": true},
+    {"method": "GET", "path": "/projects", "has_auth": false},
+    {"method": "GET", "path": "/projects/select/{id}", "has_auth": false},
+    {"method": "POST", "path": "/projects/create", "has_auth": true},
+    {"method": "PUT", "path": "/projects/update/{id}", "has_auth": true},
+    {"method": "DELETE", "path": "/projects/delete/{id}", "has_auth": true}
+  ],
+  "schemas": ["User", "Project"],
+  "security_schemes": [
+    {"name": "BearerAuth", "type": "http"}
+  ]
+}

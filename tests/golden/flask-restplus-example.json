@@ -1,0 +1,29 @@
+{
+  "endpoints": [
+    {"method": "GET", "path": "/api/v1/users", "has_auth": true},
+    {"method": "POST", "path": "/api/v1/users", "has_auth": false},
+    {"method": "GET", "path": "/api/v1/users/signup-form", "has_auth": false},
+    {"method": "GET", "path": "/api/v1/users/{user_id}", "has_auth": true},
+    {"method": "PATCH", "path": "/api/v1/users/{user_id}", "has_auth": true},
+    {"method": "GET", "path": "/api/v1/users/me", "has_auth": true},
+    {"method": "GET", "path": "/api/v1/teams", "has_auth": true},
+    {"method": "POST", "path": "/api/v1/teams", "has_auth": true},
+    {"method": "GET", "path": "/api/v1/teams/{team_id}", "has_auth": true},
+    {"method": "PATCH", "path": "/api/v1/teams/{team_id}", "has_auth": true},
+    {"method": "DELETE", "path": "/api/v1/teams/{team_id}", "has_auth": true},
+    {"method": "GET", "path": "/api/v1/teams/{team_id}/members", "has_auth": true},
+    {"method": "POST", "path": "/api/v1/teams/{team_id}/members", "has_auth": true},
+    {"method": "DELETE", "path": "/api/v1/teams/{team_id}/members/{user_id}", "has_auth": true},
+    {"method": "GET", "path": "/api/v1/auth/oauth2_clients", "has_auth": true},
+    {"method": "POST", "path": "/api/v1/auth/oauth2_clients", "has_auth": true},
+    {"method": "GET", "path": "/auth/oauth2/token", "has_auth": false},
+    {"method": "POST", "path": "/auth/oauth2/token", "has_auth": false},
+    {"method": "POST", "path": "/auth/oauth2/revoke", "has_auth": false},
+    {"method": "GET", "path": "/auth/oauth2/authorize", "has_auth": true},
+    {"method": "POST", "path": "/auth/oauth2/authorize", "has_auth": true}
+  ],
+  "schemas": ["User", "Team", "TeamMember", "OAuth2Client"],
+  "security_schemes": [
+    {"name": "OAuth2", "type": "oauth2"}
+  ]
+}

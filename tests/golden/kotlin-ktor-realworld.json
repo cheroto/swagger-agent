@@ -1,0 +1,27 @@
+{
+  "endpoints": [
+    {"method": "POST", "path": "/users", "has_auth": false},
+    {"method": "POST", "path": "/users/login", "has_auth": false},
+    {"method": "GET", "path": "/user", "has_auth": true},
+    {"method": "PUT", "path": "/user", "has_auth": true},
+    {"method": "GET", "path": "/profiles/{username}", "has_auth": false},
+    {"method": "POST", "path": "/profiles/{username}/follow", "has_auth": true},
+    {"method": "DELETE", "path": "/profiles/{username}/follow", "has_auth": true},
+    {"method": "GET", "path": "/articles/feed", "has_auth": true},
+    {"method": "GET", "path": "/articles", "has_auth": false},
+    {"method": "POST", "path": "/articles", "has_auth": true},
+    {"method": "GET", "path": "/articles/{slug}", "has_auth": false},
+    {"method": "PUT", "path": "/articles/{slug}", "has_auth": true},
+    {"method": "DELETE", "path": "/articles/{slug}", "has_auth": true},
+    {"method": "POST", "path": "/articles/{slug}/favorite", "has_auth": true},
+    {"method": "DELETE", "path": "/articles/{slug}/favorite", "has_auth": true},
+    {"method": "POST", "path": "/articles/{slug}/comments", "has_auth": true},
+    {"method": "GET", "path": "/articles/{slug}/comments", "has_auth": false},
+    {"method": "DELETE", "path": "/articles/{slug}/comments/{id}", "has_auth": true},
+    {"method": "GET", "path": "/tags", "has_auth": false}
+  ],
+  "schemas": ["User", "Article", "Comment", "Profile", "Tag", "UserDTO", "ArticleDTO", "CommentDTO", "ProfileDTO"],
+  "security_schemes": [
+    {"name": "BearerAuth", "type": "http"}
+  ]
+}

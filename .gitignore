@@ -4,6 +4,9 @@ __pycache__/
 dist/
 build/
 .env
+.DS_Store
+.benchmarks/
+.pytest_cache/
 outputs/
 .cache/
 tests/e2e/repos/

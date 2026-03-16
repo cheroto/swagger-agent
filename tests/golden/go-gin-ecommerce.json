@@ -1,0 +1,30 @@
+{
+  "endpoints": [
+    {"method": "GET", "path": "/api", "has_auth": false},
+    {"method": "POST", "path": "/api/users", "has_auth": false},
+    {"method": "POST", "path": "/api/users/login", "has_auth": false},
+    {"method": "GET", "path": "/api/products", "has_auth": false},
+    {"method": "GET", "path": "/api/products/{slug}", "has_auth": false},
+    {"method": "POST", "path": "/api/products", "has_auth": true},
+    {"method": "DELETE", "path": "/api/products/{slug}", "has_auth": true},
+    {"method": "GET", "path": "/api/products/{slug}/comments", "has_auth": false},
+    {"method": "GET", "path": "/api/products/{slug}/comments/{id}", "has_auth": false},
+    {"method": "GET", "path": "/api/comments/{id}", "has_auth": false},
+    {"method": "POST", "path": "/api/products/{slug}/comments", "has_auth": true},
+    {"method": "DELETE", "path": "/api/comments/{id}", "has_auth": true},
+    {"method": "DELETE", "path": "/api/products/{slug}/comments/{id}", "has_auth": true},
+    {"method": "GET", "path": "/api/users/addresses", "has_auth": true},
+    {"method": "POST", "path": "/api/users/addresses", "has_auth": true},
+    {"method": "GET", "path": "/api/tags", "has_auth": false},
+    {"method": "POST", "path": "/api/tags", "has_auth": true},
+    {"method": "GET", "path": "/api/categories", "has_auth": false},
+    {"method": "POST", "path": "/api/categories", "has_auth": true},
+    {"method": "POST", "path": "/api/orders", "has_auth": false},
+    {"method": "GET", "path": "/api/orders", "has_auth": true},
+    {"method": "GET", "path": "/api/orders/{id}", "has_auth": true}
+  ],
+  "schemas": ["User", "Product", "Comment", "Address", "Tag", "Category", "Order", "OrderItem", "Role"],
+  "security_schemes": [
+    {"name": "BearerAuth", "type": "http"}
+  ]
+}

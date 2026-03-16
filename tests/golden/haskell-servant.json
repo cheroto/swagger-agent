@@ -1,0 +1,10 @@
+{
+  "endpoints": [
+    {"method": "GET", "path": "/users", "has_auth": false},
+    {"method": "GET", "path": "/users/{name}", "has_auth": false},
+    {"method": "POST", "path": "/users", "has_auth": false},
+    {"method": "GET", "path": "/metrics", "has_auth": false}
+  ],
+  "schemas": ["User", "CreateUserRequest", "UpdateUserRequest"],
+  "security_schemes": []
+}
