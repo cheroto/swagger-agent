@@ -97,17 +97,15 @@ def wrap_client(client: Any, base_url: str, *, overwrite: bool = False) -> Any:
         response_model: type,
         messages: list[dict[str, str]],
         temperature: float = 0.0,
-        reasoning_effort: str = "",
         **kwargs: Any,
     ) -> Any:
         # Include the model's JSON schema in the cache key so that
         # field description changes invalidate cached responses.
         schema_str = json.dumps(response_model.model_json_schema(), sort_keys=True)
+        # Extract reasoning_effort from extra_body for cache key differentiation
+        extra_body = kwargs.get("extra_body", {})
+        reasoning_effort = extra_body.get("reasoning_effort", "") if isinstance(extra_body, dict) else ""
         key = _cache_key(model, temperature, base_url, messages, response_model.__name__, schema_str, reasoning_effort)
-
-        # Pass reasoning_effort through to real create if set
-        if reasoning_effort:
-            kwargs["reasoning_effort"] = reasoning_effort
 
         if not overwrite:
             cached = load(key)

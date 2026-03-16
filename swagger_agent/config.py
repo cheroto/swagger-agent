@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import instructor
 from openai import OpenAI
 from pydantic_settings import BaseSettings
@@ -47,15 +49,17 @@ class LLMConfig(BaseSettings):
     max_workers_route: int = 1
     max_workers_schema: int = 1
 
-    def extra_create_kwargs(self) -> dict[str, str]:
+    def extra_create_kwargs(self) -> dict[str, Any]:
         """Return extra kwargs to pass to chat.completions.create().
 
         Currently handles reasoning_effort for thinking models
-        (OpenAI o-series, Google Gemini 2.5+).
+        (OpenAI o-series, Google Gemini 2.5+). Passed via extra_body
+        to avoid client-side Pydantic validation errors on SDKs or
+        backends that don't recognize the parameter.
         """
-        kwargs: dict[str, str] = {}
+        kwargs: dict[str, Any] = {}
         if self.llm_reasoning_effort:
-            kwargs["reasoning_effort"] = self.llm_reasoning_effort
+            kwargs["extra_body"] = {"reasoning_effort": self.llm_reasoning_effort}
         return kwargs
 
     def for_agent(self, agent: str) -> tuple[str, str]:
