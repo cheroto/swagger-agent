@@ -453,6 +453,7 @@ def run_scout(
             messages=messages,
             temperature=config.llm_temperature,
             max_tokens=config.llm_max_tokens,
+            **config.extra_create_kwargs(),
         )
 
         llm_duration_ms = (time.monotonic() - llm_start) * 1000

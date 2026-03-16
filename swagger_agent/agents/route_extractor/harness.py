@@ -106,6 +106,7 @@ def run_route_extractor(
         messages=p1_messages,
         temperature=config.llm_temperature,
         max_tokens=4096,
+        **config.extra_create_kwargs(),
     )
 
     phase1_duration_ms = (time.monotonic() - p1_start) * 1000
@@ -177,6 +178,7 @@ def run_route_extractor(
         messages=p2_messages,
         temperature=config.llm_temperature,
         max_tokens=config.llm_max_tokens,
+        **config.extra_create_kwargs(),
     )
 
     phase2_duration_ms = (time.monotonic() - p2_start) * 1000

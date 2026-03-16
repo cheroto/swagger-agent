@@ -25,6 +25,7 @@ def _cache_key(
     messages: list[dict[str, str]],
     response_model_name: str,
     response_model_schema: str = "",
+    reasoning_effort: str = "",
 ) -> str:
     """SHA-256 hash of all inputs that affect LLM output.
 
@@ -32,18 +33,17 @@ def _cache_key(
     changes (which instructor passes to the LLM as tool definitions)
     invalidate the cache automatically.
     """
-    blob = json.dumps(
-        {
-            "model": model,
-            "temperature": temperature,
-            "base_url": base_url,
-            "messages": messages,
-            "response_model": response_model_name,
-            "response_model_schema": response_model_schema,
-        },
-        sort_keys=True,
-        ensure_ascii=False,
-    )
+    key_data: dict[str, Any] = {
+        "model": model,
+        "temperature": temperature,
+        "base_url": base_url,
+        "messages": messages,
+        "response_model": response_model_name,
+        "response_model_schema": response_model_schema,
+    }
+    if reasoning_effort:
+        key_data["reasoning_effort"] = reasoning_effort
+    blob = json.dumps(key_data, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
@@ -97,12 +97,17 @@ def wrap_client(client: Any, base_url: str, *, overwrite: bool = False) -> Any:
         response_model: type,
         messages: list[dict[str, str]],
         temperature: float = 0.0,
+        reasoning_effort: str = "",
         **kwargs: Any,
     ) -> Any:
         # Include the model's JSON schema in the cache key so that
         # field description changes invalidate cached responses.
         schema_str = json.dumps(response_model.model_json_schema(), sort_keys=True)
-        key = _cache_key(model, temperature, base_url, messages, response_model.__name__, schema_str)
+        key = _cache_key(model, temperature, base_url, messages, response_model.__name__, schema_str, reasoning_effort)
+
+        # Pass reasoning_effort through to real create if set
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
 
         if not overwrite:
             cached = load(key)

@@ -27,6 +27,11 @@ class LLMConfig(BaseSettings):
     instructor_max_retries: int = 3
     instructor_mode: str = "tools"
 
+    # Reasoning effort: "", "none", "low", "medium", "high"
+    # Works with OpenAI o-series and Google Gemini 2.5+ thinking models.
+    # Empty string = don't set (use model default).
+    llm_reasoning_effort: str = ""
+
     # Per-agent overrides
     llm_model_scout: str = ""
     llm_model_route_extractor: str = ""
@@ -41,6 +46,17 @@ class LLMConfig(BaseSettings):
     # Concurrency settings (1 = sequential, current behavior)
     max_workers_route: int = 1
     max_workers_schema: int = 1
+
+    def extra_create_kwargs(self) -> dict[str, str]:
+        """Return extra kwargs to pass to chat.completions.create().
+
+        Currently handles reasoning_effort for thinking models
+        (OpenAI o-series, Google Gemini 2.5+).
+        """
+        kwargs: dict[str, str] = {}
+        if self.llm_reasoning_effort:
+            kwargs["reasoning_effort"] = self.llm_reasoning_effort
+        return kwargs
 
     def for_agent(self, agent: str) -> tuple[str, str]:
         """Return (base_url, model) for a given agent, falling back to defaults."""

@@ -92,6 +92,7 @@ def run_schema_extractor(
         messages=messages,
         temperature=config.llm_temperature,
         max_tokens=config.llm_max_tokens,
+        **config.extra_create_kwargs(),
     )
 
     duration_ms = (time.monotonic() - start) * 1000
