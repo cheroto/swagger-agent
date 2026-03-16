@@ -80,6 +80,7 @@ class CodeAnalysis(BaseModel):
     error_handling_notes: str = Field(description="How errors are returned: try/catch patterns, error middleware, custom error classes.")
     import_lines: list[str] = Field(description="All import/require/using lines from the file, copied verbatim.")
     endpoints: list[EndpointSketch] = Field(description="Every endpoint found in the file.")
+    mount_map: dict[str, str] = Field(default_factory=dict, description="When this file mounts sub-routers/controllers at path prefixes, map the sub-file identifier (filename, module path, or controller function name) to the mount prefix. Examples: {'auth.route': '/auth', 'user.route': '/users'} for Express router.use(); {'RegisterUserRoutes': '/users', 'RegisterProductRoutes': '/products'} for Gin Group(). Empty dict if this file defines endpoints directly rather than mounting sub-routers.")
 
 
 # --- Security ---

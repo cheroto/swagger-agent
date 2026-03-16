@@ -22,6 +22,8 @@ from swagger_agent.infra.prescan import run_prescan
 from swagger_agent.infra.detectors.result import PrescanResult
 from swagger_agent.agents.route_extractor.harness import (
     RouteExtractorContext,
+    RouteExtractorRunRecord,
+    run_phase1,
     run_route_extractor,
 )
 from swagger_agent.infra.schema_loop import (
@@ -166,6 +168,142 @@ def run_pipeline(
     descriptors: list[EndpointDescriptor] = []
     total_route_files = len(manifest.route_files)
 
+    # --- Phase 2a: Run Phase 1 on potential registry files to collect mount maps ---
+    # A registry file is one that mounts sub-routers (like index.js, main.go).
+    # We detect them by looking for files whose basename suggests they're an index/entry point,
+    # or by running Phase 1 on all files and checking for mount_map entries.
+    # Optimization: only run Phase 1 separately on files that look like registries
+    # (contain "index", "main", "app", "routes", "router" in the name or are in a parent dir of other route files).
+    mount_prefixes: dict[str, str] = {}  # route_file -> mount_prefix
+
+    def _is_potential_registry(route_file: str, all_files: list[str]) -> bool:
+        """Check if a file might be a router registry that mounts sub-files."""
+        basename = os.path.basename(route_file).lower()
+        stem = os.path.splitext(basename)[0]
+        # Common registry file names
+        if stem in ("index", "main", "app", "routes", "router", "server"):
+            return True
+        # A file in a parent directory of other route files
+        route_dir = os.path.dirname(route_file)
+        for other in all_files:
+            other_dir = os.path.dirname(other)
+            if other != route_file and other_dir.startswith(route_dir + os.sep):
+                return True
+        return False
+
+    def _resolve_mount_prefix(mount_map: dict[str, str], registry_file: str,
+                               route_files: list[str]) -> dict[str, str]:
+        """Match mount_map keys to actual route file paths.
+
+        mount_map keys are identifiers like 'auth.route', 'RegisterUserRoutes', 'users_router'.
+        We fuzzy-match these against route file basenames.
+        """
+        import re as _re
+        resolved: dict[str, str] = {}
+
+        def _normalize(s: str) -> str:
+            return s.lower().replace("_", "").replace("-", "").replace(".", "")
+
+        def _tokenize(s: str) -> set[str]:
+            """Split camelCase/PascalCase/snake_case into lowercase tokens."""
+            tokens = _re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|\d|\b)|[A-Z]|\d+", s)
+            return {t.lower() for t in tokens}
+
+        for key, prefix in mount_map.items():
+            key_norm = _normalize(key)
+            key_tokens = _tokenize(key)
+            # Remove generic tokens that don't help disambiguation
+            key_tokens -= {"register", "routes", "route", "router", "controller", "handler"}
+
+            best_match = None
+            best_score = 0
+
+            for rf in route_files:
+                if rf == registry_file:
+                    continue
+                basename = os.path.basename(rf).lower()
+                stem = os.path.splitext(basename)[0]
+                stem_norm = _normalize(stem)
+                stem_tokens = _tokenize(stem)
+                stem_tokens -= {"route", "routes", "router", "controller", "handler"}
+
+                # Exact normalized match
+                if key_norm == stem_norm:
+                    best_match = rf
+                    best_score = 100
+                    break
+
+                score = 0
+                # Token overlap (most robust for camelCase function names vs filenames)
+                if key_tokens and stem_tokens:
+                    overlap = len(key_tokens & stem_tokens)
+                    if overlap > 0:
+                        score = overlap * 10 + len(key_tokens & stem_tokens) / max(len(key_tokens), len(stem_tokens))
+
+                # Substring containment
+                if key_norm in stem_norm or stem_norm in key_norm:
+                    score = max(score, len(min(key_norm, stem_norm, key=len)))
+
+                # Prefix-based matching (mount prefix matches filename)
+                prefix_stem = prefix.strip("/").split("/")[-1].lower()
+                if prefix_stem and (prefix_stem in stem_norm or stem_norm.startswith(prefix_stem)):
+                    score = max(score, len(prefix_stem) + 5)
+
+                if score > best_score:
+                    best_score = score
+                    best_match = rf
+
+            if best_match:
+                # Don't overwrite a higher-confidence match
+                if best_match not in resolved or best_score > 50:
+                    resolved[best_match] = prefix
+        return resolved
+
+    registry_files = [rf for rf in manifest.route_files
+                      if _is_potential_registry(rf, manifest.route_files)]
+
+    # Also check common entry point files that might mount route files but aren't
+    # themselves in the route file list (e.g., main.go, app.js, server.py)
+    _ENTRY_POINT_PATTERNS = [
+        "main.go", "app.go", "server.go", "router.go", "routes.go",
+        "app.js", "server.js", "app.ts", "server.ts",
+        "app.py", "server.py", "main.py",
+        "Program.cs", "Startup.cs",
+        "Application.kt", "App.kt",
+    ]
+    for pattern in _ENTRY_POINT_PATTERNS:
+        candidate = target_path / pattern
+        if candidate.is_file() and pattern not in [os.path.basename(rf) for rf in registry_files]:
+            # Use relative path
+            registry_files.append(str(candidate.relative_to(target_path)))
+
+    if registry_files:
+        if not db:
+            console.print(f"  Scanning {len(registry_files)} registry file(s) for mount prefixes...")
+        for rf in registry_files:
+            if os.path.isabs(rf):
+                rf_rel = os.path.relpath(rf, str(target_path))
+            else:
+                rf_rel = rf
+            abs_path = str(target_path / rf_rel)
+            try:
+                ctx = RouteExtractorContext(
+                    framework=manifest.framework,
+                    base_path=manifest.base_path,
+                    target_file=abs_path,
+                )
+                analysis = run_phase1(abs_path, ctx, config=config, telemetry=result.telemetry)
+                if analysis.mount_map:
+                    resolved = _resolve_mount_prefix(
+                        analysis.mount_map, rf_rel, manifest.route_files,
+                    )
+                    mount_prefixes.update(resolved)
+                    if not db:
+                        console.print(f"    Mount map from {rf_rel}: {resolved}")
+            except Exception as e:
+                logger.warning("Phase 1 mount scan failed for %s: %s", rf, e)
+
+    # --- Phase 2b: Full extraction with mount prefixes ---
     def _extract_one_route(
         idx: int, route_file: str,
     ) -> tuple[int, str, EndpointDescriptor | None, object | None, str | None]:
@@ -183,6 +321,7 @@ def run_pipeline(
             framework=manifest.framework,
             base_path=manifest.base_path,
             target_file=abs_path,
+            mount_prefix=mount_prefixes.get(route_file, ""),
         )
         try:
             descriptor, record = run_route_extractor(abs_path, ctx, config=config, telemetry=result.telemetry)

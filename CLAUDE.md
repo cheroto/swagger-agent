@@ -380,6 +380,16 @@ What this means in practice:
 
 When evaluating any proposed solution, ask: "Does this work on a codebase I've never seen, in a framework I've never heard of?" If not, redesign it.
 
+## Prompt Design: Schema Is the Single Source of Truth
+
+**Never duplicate Pydantic field descriptions in system prompts.** When using `instructor` for structured output, the Pydantic model's `Field(description=...)` values are injected into the JSON schema that the LLM sees as its response format. Writing the same instructions in the system prompt means the LLM receives them twice — wasting tokens and creating divergence risk.
+
+- **System prompts** contain only: role framing, high-level task description, and behavioral constraints (e.g., "do not extract full endpoint details"). They should be 2–5 lines.
+- **Pydantic field descriptions** are the single source of truth for what each field means, what values are valid, and what examples look like. Put all semantic detail there.
+- **Never add numbered instruction lists** that mirror the fields in the response model. If you find yourself writing "1. FIELD_X: description..." in a prompt and `Field(description="description...")` on the same model, delete the prompt version.
+
+This applies to all agents (Scout, Route Extractor, Schema Extractor). Small LLMs follow structural constraints (JSON schema) much more reliably than prose instructions.
+
 ## Golden Test Data & Scoring
 
 Manually curated ground truth in `tests/golden/` for evaluating pipeline output quality. Each `<repo>.json` contains expected endpoints, schemas, and security schemes for a target repo.

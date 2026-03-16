@@ -18,47 +18,7 @@ from swagger_agent.models import CodeAnalysis
 CODE_ANALYSIS_PROMPT = """\
 You are a code analyst. Read the route file and report what you observe.
 Do NOT extract full endpoint details — just identify patterns and structure.
-
-## Report the following:
-
-1. ROUTING STYLE: How are routes defined? (decorators, method calls, annotations, router chain, etc.)
-   Example: "router.get(path, ...handler)", "@app.route(path)", "@GetMapping(path)"
-
-2. PATH PARAM SYNTAX: What syntax is used for path parameters?
-   Example: ":param", "{param}", "<param>", or "none observed"
-
-3. BASE PREFIX: Is there a router-level prefix applied to all routes?
-   Example: "/api/users", "/articles", or "" if none
-
-4. AUTH PATTERNS: What authentication/authorization mechanism(s) do you see?
-   For each one report:
-   - mechanism: How is it applied? (middleware in handler chain, decorator, annotation, guard, etc.)
-   - indicator: The exact code marker (e.g. "auth.required", "@PreAuthorize", "[Authorize]", "Depends(get_current_user)")
-   - scheme_type: What type of auth? ("bearer", "apikey", "cookie", "basic", "oauth2", "unknown")
-   - applies_to: Scope — "all" (controller/router-wide), "per-endpoint", or "group"
-   If no auth patterns are visible, return an empty list.
-
-5. HAS AUTH IMPORTS: Are there any auth-related imports? (true/false)
-
-5b. AUTH INFERENCE NOTES: If no explicit auth patterns are found in this file, look for indirect signals:
-   - Comments mentioning middleware groups that apply auth (e.g. "assigned the api middleware group")
-   - Route grouping structures that suggest external auth (e.g. Laravel Route::group, Express router.use)
-   - Naming conventions suggesting auth: endpoints like GET /user (singular, no ID = "current user") or /me typically require auth
-   - Serverless: checks on authorizer/claims/token in request context
-   Report what you find. If nothing, leave empty.
-
-6. REQUEST BODY STYLE: How are request bodies consumed?
-   Example: "req.body (implicit JSON)", "Pydantic model in function signature", "@RequestBody annotation", "not observed"
-
-7. ERROR HANDLING: How are errors returned?
-   Example: "next(err) middleware pattern", "raise HTTPException", "throw new HttpException", "not observed"
-
-8. IMPORT LINES: List ALL import/require/using statements from the file, exactly as they appear.
-
-9. ENDPOINTS: List every HTTP endpoint you can identify:
-   - method: HTTP method (GET, POST, PUT, PATCH, DELETE — uppercase)
-   - path: Full path including any router prefix
-   - handler_name: The function or method name that handles this endpoint
+Fill every field in the response schema. All field semantics are defined in the schema descriptions.
 """
 
 
@@ -81,7 +41,7 @@ All field semantics, valid values, and decision rules are defined in the schema 
 """
 
 
-def build_phase2_prompt(analysis: CodeAnalysis, base_path: str) -> str:
+def build_phase2_prompt(analysis: CodeAnalysis, base_path: str, mount_prefix: str = "") -> str:
     """Build the Phase 2 extraction prompt from Phase 1 observations.
 
     Deterministic function — no LLM calls.
@@ -93,7 +53,17 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str) -> str:
     sections.append(f"- Routing style: {analysis.routing_style}")
     sections.append(f"- Path parameter syntax: {analysis.path_param_syntax}")
 
-    prefix = analysis.base_prefix or base_path
+    # Combine base_path + mount_prefix + file-level prefix
+    effective_prefix = base_path.rstrip("/")
+    if mount_prefix:
+        effective_prefix = effective_prefix + "/" + mount_prefix.strip("/")
+    if analysis.base_prefix:
+        # Only add file-level prefix if it's not already covered by the effective prefix
+        file_prefix = analysis.base_prefix.strip("/")
+        if file_prefix and not effective_prefix.endswith(file_prefix):
+            effective_prefix = effective_prefix + "/" + file_prefix
+
+    prefix = effective_prefix or analysis.base_prefix or base_path
     if prefix:
         sections.append(f"- Base prefix: {prefix}")
 
