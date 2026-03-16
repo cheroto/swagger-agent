@@ -294,7 +294,8 @@ def run_pipeline(
     # Resolve mount prefixes from Phase 1 mount_maps
     mount_prefixes = _resolve_mount_maps(records_by_file, manifest.route_files)
 
-    # Round 2: re-extract files that got a mount prefix (Phase 2 will produce different paths)
+    # Round 2: re-extract files that got a mount prefix.
+    # REPLACES Round 1 results for these files (not append).
     if mount_prefixes:
         if not db:
             console.print(f"  Re-extracting {len(mount_prefixes)} file(s) with mount prefixes: "
@@ -308,18 +309,41 @@ def run_pipeline(
             _, route_file, descriptor, record, error = _extract_one_route(
                 idx_for_rf, rf, mount_prefix=prefix,
             )
-            results_by_idx[idx_for_rf] = (route_file, descriptor, record, error)
-            if error:
+            if not error:
+                # Replace Round 1 result — mount-prefixed extraction supersedes
+                results_by_idx[idx_for_rf] = (route_file, descriptor, record, error)
                 if not db:
-                    console.print(f"    [red]Re-extract failed:[/red] {error}")
-            elif not db:
-                console.print(f"    {record.endpoint_count} endpoint(s) with prefix {prefix}")
+                    console.print(f"    {record.endpoint_count} endpoint(s) with prefix {prefix}")
+            else:
+                # Keep Round 1 result on failure
+                if not db:
+                    console.print(f"    [red]Re-extract failed (keeping Round 1):[/red] {error}")
+
+    # Identify pure registry files: files that produced mount_maps where ALL
+    # mapped sub-files were successfully re-extracted. These files' Round 1
+    # endpoints are noise (they read controller code inline, not their own routes).
+    registry_files: set[str] = set()
+    if mount_prefixes:
+        for source_file, record in records_by_file.items():
+            if not record.mount_map:
+                continue
+            # Check if all mount targets were re-extracted
+            mapped_count = sum(1 for rf in mount_prefixes if rf != source_file)
+            if mapped_count > 0:
+                registry_files.add(source_file)
 
     # Append in original file order for deterministic spec output
     for idx in sorted(results_by_idx):
         route_file, descriptor, record, error = results_by_idx[idx]
         if error:
             result.failed_routes.append((route_file, error))
+        elif route_file in registry_files:
+            # Skip registry files — their endpoints came from reading sub-router code
+            if not db:
+                console.print(
+                    f"  [dim]Skipping registry file {route_file} "
+                    f"({len(descriptor.endpoints)} endpoints from inline reads)[/dim]"
+                )
         else:
             descriptors.append(descriptor)
 

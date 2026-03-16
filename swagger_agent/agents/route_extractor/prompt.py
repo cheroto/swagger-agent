@@ -78,65 +78,24 @@ def build_phase2_prompt(
     sections.append(f"- Request bodies: {analysis.request_body_style}")
     sections.append(f"- Error handling: {analysis.error_handling_notes}")
 
-    # --- Auth instructions ---
+    # --- Auth context (data only — classification rules are in Endpoint.security field description) ---
     if analysis.auth_patterns:
-        sections.append("\n## Authentication\n")
+        sections.append("\n## Auth Patterns Observed\n")
         for ap in analysis.auth_patterns:
             scheme_name = _scheme_name_from_type(ap.scheme_type)
             scheme_type = ap.scheme_type if ap.scheme_type in ("bearer", "apikey", "basic", "oauth2", "cookie") else "bearer"
-            sec_obj = f'{{"name": "{scheme_name}", "scheme_type": "{scheme_type}"}}'
-            if ap.applies_to == "all":
-                sections.append(
-                    f"All endpoints in this file use `{ap.indicator}` ({ap.mechanism}). "
-                    f"Set security: [{sec_obj}] on every endpoint."
-                )
-            elif ap.applies_to == "per-endpoint":
-                sections.append(
-                    f"Endpoints with `{ap.indicator}` ({ap.mechanism}) require auth → "
-                    f"set security: [{sec_obj}]. "
-                    "Endpoints WITHOUT it are public → set security: []."
-                )
-            else:  # group
-                sections.append(
-                    f"Some endpoint groups use `{ap.indicator}` ({ap.mechanism}) → "
-                    f"set security: [{sec_obj}]. "
-                    "Endpoints outside the group without auth are public → set security: []. "
-                    "IMPORTANT: If the auth wrapper has an 'optional' flag "
-                    "(e.g. authenticate(optional=true), optional: true), "
-                    "the endpoints inside are PUBLIC (security: []) — optional auth "
-                    "means the endpoint works without credentials."
-                )
+            sections.append(
+                f"- `{ap.indicator}` ({ap.mechanism}), "
+                f"scheme: {scheme_name}/{scheme_type}, applies_to: {ap.applies_to}"
+            )
     elif default_auth_hint:
-        # Global auth detected in non-route files (base controllers, middleware, config)
-        sections.append("\n## Authentication\n")
-        sections.append(
-            "No per-endpoint auth markers in this file, but the project has global auth:\n"
-            f"```\n{default_auth_hint}\n```\n\n"
-            'DEFAULT: Set security: [{"name": "BearerAuth", "scheme_type": "bearer"}] on ALL endpoints. '
-            "Only set security: [] (public) on endpoints that are explicitly excluded from auth "
-            "(e.g., login, register, health check, public read endpoints, "
-            "or endpoints with skip_before_action/AllowAnonymous/permitAll markers in the code)."
-        )
-    elif not analysis.has_auth_imports and not analysis.auth_inference_notes:
-        sections.append("\n## Authentication\n")
-        sections.append("No auth patterns detected. Set security: [] (public) on all endpoints.")
+        sections.append("\n## Global Auth Context (from project, not this file)\n")
+        sections.append(f"```\n{default_auth_hint}\n```")
     elif analysis.auth_inference_notes:
-        sections.append("\n## Authentication\n")
-        sections.append(
-            "No explicit per-endpoint auth markers were found, but there are indirect signals:\n"
-            f"{analysis.auth_inference_notes}\n\n"
-            "Without explicit per-endpoint markers (decorators, attributes, middleware), "
-            "you cannot reliably determine which endpoints require auth. "
-            "Default to security: [] (public) for all endpoints in this file. "
-            'Only set security: [{"name": "BearerAuth", "scheme_type": "bearer"}] if the handler code itself '
-            "explicitly checks credentials (reads a token, validates a claim, calls an auth service)."
-        )
+        sections.append("\n## Auth Inference Notes\n")
+        sections.append(analysis.auth_inference_notes)
     else:
-        sections.append("\n## Authentication\n")
-        sections.append(
-            "Auth-related imports exist but no clear per-endpoint pattern was detected. "
-            "Examine each endpoint for auth indicators. If none found, set security: []."
-        )
+        sections.append("\n## Auth: none detected")
 
     # --- Import lines for ref resolution ---
     if analysis.import_lines:
