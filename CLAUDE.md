@@ -409,9 +409,23 @@ Manually curated ground truth in `tests/golden/` for evaluating pipeline output 
 
 Schemas include **every schema the assembler should emit** — domain models, request DTOs, response DTOs, and envelope wrappers. Each schema lists its expected top-level property names for structural matching.
 
-**16 repos** covering diverse frameworks and languages: ASP.NET Core, Clojure Compojure, Dart Frog, Flask, Go Gin, Haskell Servant, Kotlin Ktor, Laravel, NestJS, Express (x2), OCaml Dream, Rust, Rails, Spring Boot, Swift Vapor.
+**9 Tier 1 repos** — the most common production frameworks a pentester will encounter:
 
-**Test repo location:** `tests/e2e/repos/` — all 16 golden repos (plus additional repos for other tests) live here. Do not look for them elsewhere.
+| Repo | Framework | Language |
+|------|-----------|----------|
+| aspnetcore-realworld | ASP.NET Core | C# |
+| flask-restplus-example | Flask | Python |
+| go-gin-ecommerce | Go Gin | Go |
+| laravel-realworld | Laravel | PHP |
+| nestjs-pg-crud | NestJS | TypeScript |
+| node-express-boilerplate | Express | JavaScript |
+| rails-rest-api | Rails | Ruby |
+| rest-api-node | Express | JavaScript |
+| spring-boot-blog | Spring Boot | Java |
+
+Exotic/niche frameworks (Haskell Servant, OCaml Dream, Clojure Compojure, Dart Frog, Swift Vapor, Kotlin Ktor, Rust Actix) were removed from the golden set to focus scoring on high-impact targets. The system should still handle them via its agnostic design, but scores are not tracked. The e2e test repos for these frameworks still exist in `tests/e2e/repos/` for ad-hoc testing.
+
+**Test repo location:** `tests/e2e/repos/` — all golden repos (plus additional repos for other tests) live here. Do not look for them elsewhere.
 
 **Scoring** (`tests/golden/score.py`):
 

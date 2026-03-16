@@ -15,9 +15,104 @@ from swagger_agent.infra.detectors.framework import detect_framework
 from swagger_agent.infra.detectors.routes import find_route_files
 from swagger_agent.infra.detectors.routes._base import ROUTE_FILE_EXCLUDES
 from swagger_agent.infra.detectors.servers import find_servers
-from swagger_agent.infra.detectors._utils import glob_files
+from swagger_agent.infra.detectors._utils import glob_files, read_file_safe
 
 logger = logging.getLogger("swagger_agent.prescan")
+
+
+# Auth-related patterns to grep for in non-route files.
+# These are structural keywords that indicate global/default auth mechanisms.
+# Intentionally language-agnostic: simple keyword patterns, no framework dispatch.
+_AUTH_GREP_PATTERNS = [
+    re.compile(r"before_action\s+:auth", re.IGNORECASE),
+    re.compile(r"before_filter\s+:auth", re.IGNORECASE),
+    re.compile(r"skip_before_action\s+:auth", re.IGNORECASE),
+    re.compile(r"\bmiddleware\b.*\b(auth|jwt|bearer|token)\b", re.IGNORECASE),
+    re.compile(r"\[Authorize\]"),
+    re.compile(r"@PreAuthorize\b"),
+    re.compile(r"\.authorizeRequests\b|\.authorizeHttpRequests\b"),
+    re.compile(r"SecuritySchemeType\b"),
+    re.compile(r"passport\.(authenticate|use)\b", re.IGNORECASE),
+    re.compile(r"@UseGuards\b"),
+]
+
+
+def _find_auth_context(
+    target_dir: str,
+    route_files: list[str],
+    language: str | None,
+) -> str:
+    """Grep for global auth patterns in non-route, non-test files.
+
+    Returns a short human-readable hint describing the auth mechanism found,
+    or empty string if nothing found. Purely deterministic — no LLM calls.
+    """
+    ext_map = {
+        "javascript": "**/*.{js,ts}",
+        "typescript": "**/*.{ts,js}",
+        "python": "**/*.py",
+        "go": "**/*.go",
+        "ruby": "**/*.rb",
+        "rust": "**/*.rs",
+        "php": "**/*.php",
+        "java": "**/*.java",
+        "kotlin": "**/*.{kt,java}",
+        "csharp": "**/*.cs",
+        "swift": "**/*.swift",
+        "dart": "**/*.dart",
+    }
+    glob_pattern = ext_map.get((language or "").lower())
+    if not glob_pattern:
+        # Fallback: scan common source extensions when language is unknown
+        glob_pattern = "**/*.{rb,py,js,ts,go,java,kt,cs,php,rs,swift,dart}"
+
+    candidates = glob_files(target_dir, glob_pattern)
+    route_set = set(route_files)
+    # Prioritize files with auth-related names
+    auth_hints = ("controller", "middleware", "auth", "security", "guard", "kernel", "concern", "config")
+
+    auth_candidates = []
+    other_candidates = []
+    for rel_path in candidates:
+        if rel_path in route_set:
+            continue
+        if ROUTE_FILE_EXCLUDES.search(rel_path):
+            continue
+        base_lower = os.path.basename(rel_path).lower()
+        if ".spec." in base_lower or ".test." in base_lower:
+            continue
+        if any(h in base_lower for h in auth_hints):
+            auth_candidates.append(rel_path)
+        else:
+            other_candidates.append(rel_path)
+
+    # Search auth-named files first, then others (up to a limit)
+    search_order = auth_candidates[:30] + other_candidates[:20]
+
+    matches: list[tuple[str, str]] = []  # (file, matched_line)
+    for rel_path in search_order:
+        full = os.path.join(target_dir, rel_path)
+        content = read_file_safe(full, max_bytes=16_000)
+        if not content:
+            continue
+        for line in content.splitlines():
+            for pat in _AUTH_GREP_PATTERNS:
+                if pat.search(line):
+                    matches.append((rel_path, line.strip()))
+                    break
+            if len(matches) >= 5:
+                break
+        if len(matches) >= 5:
+            break
+
+    if not matches:
+        return ""
+
+    # Build a concise hint from the matches
+    parts = []
+    for fpath, line in matches[:5]:
+        parts.append(f"{fpath}: {line}")
+    return "\n".join(parts)
 
 
 def _find_importers(
@@ -142,7 +237,14 @@ def run_prescan(target_dir: str) -> PrescanResult:
         )
         logger.info("Found %d importer(s) of route files: %s", len(importers), importers)
 
-    # 4. Find servers and base path
+    # 4. Find global auth context
+    auth_hint = _find_auth_context(target_dir, result.route_files, lang)
+    if auth_hint:
+        result.auth_context_hint = auth_hint
+        result.notes.append(f"Detected global auth context in {auth_hint.splitlines()[0].split(':')[0]}")
+        logger.info("Auth context detected: %s", auth_hint.splitlines()[0])
+
+    # 5. Find servers and base path
     servers, base_path, server_notes = find_servers(target_dir, fw, lang)
     result.servers = servers
     result.base_path = base_path

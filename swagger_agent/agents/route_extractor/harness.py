@@ -33,6 +33,7 @@ class RouteExtractorContext:
     base_path: str
     target_file: str
     mount_prefix: str = ""
+    default_auth_hint: str = ""
 
 
 @dataclass
@@ -161,7 +162,9 @@ def run_route_extractor(
     )
 
     # 5. Phase 2: Endpoint Extraction
-    phase2_prompt = build_phase2_prompt(analysis, context.base_path, context.mount_prefix)
+    phase2_prompt = build_phase2_prompt(
+        analysis, context.base_path, context.mount_prefix, context.default_auth_hint,
+    )
 
     logger.info("Phase 2: Extracting endpoints from %s", target_file)
     p2_messages = [

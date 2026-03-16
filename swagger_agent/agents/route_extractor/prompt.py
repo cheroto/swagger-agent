@@ -41,7 +41,12 @@ All field semantics, valid values, and decision rules are defined in the schema 
 """
 
 
-def build_phase2_prompt(analysis: CodeAnalysis, base_path: str, mount_prefix: str = "") -> str:
+def build_phase2_prompt(
+    analysis: CodeAnalysis,
+    base_path: str,
+    mount_prefix: str = "",
+    default_auth_hint: str = "",
+) -> str:
     """Build the Phase 2 extraction prompt from Phase 1 observations.
 
     Deterministic function — no LLM calls.
@@ -101,6 +106,17 @@ def build_phase2_prompt(analysis: CodeAnalysis, base_path: str, mount_prefix: st
                     "the endpoints inside are PUBLIC (security: []) — optional auth "
                     "means the endpoint works without credentials."
                 )
+    elif default_auth_hint:
+        # Global auth detected in non-route files (base controllers, middleware, config)
+        sections.append("\n## Authentication\n")
+        sections.append(
+            "No per-endpoint auth markers in this file, but the project has global auth:\n"
+            f"```\n{default_auth_hint}\n```\n\n"
+            'DEFAULT: Set security: [{"name": "BearerAuth", "scheme_type": "bearer"}] on ALL endpoints. '
+            "Only set security: [] (public) on endpoints that are explicitly excluded from auth "
+            "(e.g., login, register, health check, public read endpoints, "
+            "or endpoints with skip_before_action/AllowAnonymous/permitAll markers in the code)."
+        )
     elif not analysis.has_auth_imports and not analysis.auth_inference_notes:
         sections.append("\n## Authentication\n")
         sections.append("No auth patterns detected. Set security: [] (public) on all endpoints.")

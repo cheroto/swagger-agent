@@ -48,6 +48,7 @@ class DiscoveryManifest(BaseModel):
     route_files: list[str] = []
     servers: list[str] = []
     base_path: str = ""
+    default_auth_hint: str = Field(default="", description="Project-wide auth mechanism detected in base controllers, middleware configs, or security filters. Describes how auth is applied globally so the Route Extractor can infer per-endpoint auth even when the route file has no auth markers. Empty if no global auth detected.")
 
 
 # --- Code Analysis (Route Extractor Phase 1) ---
@@ -64,7 +65,7 @@ class AuthPattern(BaseModel):
     """Observed auth mechanism from Phase 1."""
     mechanism: str = Field(description="How auth is applied: 'middleware in handler chain', 'decorator', 'annotation', 'dependency injection'.")
     indicator: str = Field(description="The exact code marker, e.g. 'auth.required', '@PreAuthorize', '[Authorize]', 'Depends(get_current_user)'.")
-    scheme_type: str = Field(description="Auth type: 'bearer', 'apikey', 'cookie', 'basic', 'oauth2', 'unknown'.")
+    scheme_type: str = Field(description="Auth type: 'bearer', 'apikey', 'cookie', 'basic', 'oauth2', 'unknown'. Prefer the type explicitly declared in the source code (e.g., SecuritySchemeType.ApiKey → 'apikey', cookie_sessions → 'cookie') over inference from token format.")
     applies_to: str = Field(description="Scope: 'all' (class/router level), 'per-endpoint', 'group' (middleware group).")
 
 

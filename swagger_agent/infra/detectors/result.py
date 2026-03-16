@@ -12,6 +12,7 @@ class PrescanResult:
     route_files: list[str] = field(default_factory=list)
     servers: list[str] = field(default_factory=list)
     base_path: str = ""
+    auth_context_hint: str = ""
     notes: list[str] = field(default_factory=list)
 
 
