@@ -46,80 +46,8 @@ class RouteExtractorRunRecord:
     phase2_duration_ms: float = 0.0
     code_analysis: dict = field(default_factory=dict)
     code_analysis_obj: object = None  # CodeAnalysis Pydantic model (for test assertions)
+    mount_map: dict = field(default_factory=dict)  # Phase 1 mount_map for pipeline use
     file_lines: int = 0
-
-
-def run_phase1(
-    target_file: str,
-    context: RouteExtractorContext,
-    config: LLMConfig | None = None,
-    telemetry: Telemetry | None = None,
-) -> CodeAnalysis:
-    """Run only Phase 1 (Code Analysis) on a route file.
-
-    Used by the pipeline to collect mount_map entries before running
-    full extraction with mount prefixes.
-    """
-    if config is None:
-        config = LLMConfig()
-
-    client, model = make_client(config, "route_extractor")
-
-    file_path = Path(target_file)
-    if not file_path.is_file():
-        raise FileNotFoundError(f"Route file not found: {target_file}")
-
-    file_content = file_path.read_text(encoding="utf-8", errors="replace")
-    file_lines = file_content.count("\n") + 1
-
-    context_json = json.dumps({
-        "framework": context.framework,
-        "base_path": context.base_path,
-        "target_file": context.target_file,
-    }, indent=2)
-
-    user_message = (
-        f"## Context\n\n```json\n{context_json}\n```\n\n"
-        f"## Route File: {context.target_file}\n\n"
-        f"```\n{file_content}\n```"
-    )
-
-    logger.info("Phase 1 only: Analyzing %s (%d lines)", target_file, file_lines)
-    messages = [
-        {"role": "system", "content": CODE_ANALYSIS_PROMPT},
-        {"role": "user", "content": user_message},
-    ]
-    input_chars = measure_messages(messages)
-    start = time.monotonic()
-
-    analysis = client.chat.completions.create(
-        model=model,
-        response_model=CodeAnalysis,
-        max_retries=config.instructor_max_retries,
-        messages=messages,
-        temperature=config.llm_temperature,
-        max_tokens=4096,
-    )
-
-    duration_ms = (time.monotonic() - start) * 1000
-    logger.info(
-        "Phase 1 only complete: %d endpoints, %d mount entries, %.0fms",
-        len(analysis.endpoints), len(analysis.mount_map), duration_ms,
-    )
-
-    if telemetry:
-        telemetry.record(LLMCall(
-            agent="route_extractor",
-            phase="phase1_mount_scan",
-            model=model,
-            input_chars=input_chars,
-            output_chars=len(analysis.model_dump_json()),
-            duration_ms=duration_ms,
-            target_file=context.target_file,
-            timestamp=start,
-        ))
-
-    return analysis
 
 
 def run_route_extractor(
@@ -290,6 +218,7 @@ def run_route_extractor(
         phase2_duration_ms=phase2_duration_ms,
         code_analysis=analysis.model_dump(),
         code_analysis_obj=analysis,
+        mount_map=analysis.mount_map,
         file_lines=file_lines,
     )
 

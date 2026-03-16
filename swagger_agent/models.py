@@ -129,15 +129,91 @@ class Endpoint(BaseModel):
 class EndpointDescriptor(BaseModel):
     source_file: str
     endpoints: list[Endpoint]
-    inline_schemas: dict[str, dict] = Field(default_factory=dict, description="JSON Schema objects keyed by ref_hint name, for types whose shape is visible in this file's validation code but have no importable class definition. Infrastructure merges these into the schema store before resolution.")
+    inline_schemas: list[ExtractedSchema] = Field(default_factory=list, description="Schemas for types whose shape is visible in this file's validation code but have no importable class definition (e.g., inline Pydantic models, anonymous types, validation schemas). Infrastructure merges these into the schema store before resolution.")
+
+    def inline_schemas_as_dict(self) -> dict[str, dict]:
+        """Convert inline_schemas to JSON Schema dict format for downstream consumption."""
+        result = {}
+        for schema in self.inline_schemas:
+            result[schema.name] = _extracted_to_json_schema(schema)
+        return result
 
 
 # --- Schema Descriptor ---
 
 
+class SchemaProperty(BaseModel):
+    """A single property on a data model / DTO / entity."""
+    name: str = Field(description="Property name as serialized in JSON. Use the alias if a serialization annotation provides one (@JsonProperty, @SerializedName, alias=, CodingKeys). Skip fields with exclusion annotations (@JsonIgnore, [JsonIgnore], @Transient, @Expose(serialize:false)).")
+    type: str = Field(description="JSON Schema type: 'string', 'integer', 'number', 'boolean', 'array', 'object'. Use the base type even for references (use 'object' and set ref).")
+    format: str = Field(default="", description="JSON Schema format when applicable: 'date-time', 'date', 'email', 'uuid', 'uri', 'binary', 'int64', 'float', 'double'. Empty string if none.")
+    ref: str = Field(default="", description="Referenced schema name when this property is a complex type (another model/DTO). Empty for primitives. Use the class name only, not a full $ref path.")
+    is_array: bool = Field(default=False, description="True if this property is a list/array/set of the type (List<User> → type='object', ref='User', is_array=True).")
+    nullable: bool = Field(default=False, description="True if this property accepts null/None/nil (Optional<T>, T?, T | null).")
+    enum_values: list[str] = Field(default_factory=list, description="Enum values if this is an enum type, e.g. ['active', 'inactive', 'banned']. Empty list if not an enum.")
+
+
+class ExtractedSchema(BaseModel):
+    """A single model / DTO / entity extracted from source code."""
+    name: str = Field(description="Class/struct/record/model name exactly as defined in code. Preserve original casing.")
+    properties: list[SchemaProperty] = Field(description="ALL data-carrying fields on this model. Every model has at least one field — if you cannot identify fields, the type is likely not a data model. Include inherited fields unless the parent is in known_schemas (then use parent_ref instead).")
+    required_fields: list[str] = Field(default_factory=list, description="Names of fields that are mandatory: no default value, not optional, or annotated with not-null/not-blank validators. Empty list if all fields are optional.")
+    parent_ref: str = Field(default="", description="Parent class/struct name if this model inherits from a type in known_schemas. Empty string if no inheritance or parent is not in known_schemas (in that case, include inherited fields in properties).")
+
+
 class SchemaDescriptor(BaseModel):
     source_file: str
-    schemas: dict[str, dict] = Field(description="Map of schema name to JSON Schema object. Each value must have 'type', 'properties', and optionally 'required' (non-empty array of field names). Exclude fields marked with serialization-exclusion annotations (@JsonIgnore, [JsonIgnore], @Transient, etc.). Use serialized field names (@JsonProperty name, alias, etc.) not code field names. Do NOT emit 'required': [].")
+    schemas: list[ExtractedSchema] = Field(description="Every model/entity/DTO/record class in this file. Extract ALL of them — do not skip any.")
+
+    def to_json_schema_dict(self) -> dict[str, dict]:
+        """Convert structured schemas to JSON Schema dict format for downstream consumption."""
+        result = {}
+        for schema in self.schemas:
+            result[schema.name] = _extracted_to_json_schema(schema)
+        return result
+
+
+def _extracted_to_json_schema(schema: ExtractedSchema) -> dict:
+    """Convert an ExtractedSchema to a JSON Schema object."""
+    props: dict[str, dict] = {}
+    for p in schema.properties:
+        prop_schema = _property_to_json_schema(p)
+        props[p.name] = prop_schema
+
+    result: dict = {"type": "object", "properties": props}
+
+    if schema.required_fields:
+        result["required"] = schema.required_fields
+
+    if schema.parent_ref:
+        # Use allOf for inheritance
+        parent_ref = f"#/components/schemas/{schema.parent_ref}"
+        child = result
+        result = {"allOf": [{"$ref": parent_ref}, child]}
+
+    return result
+
+
+def _property_to_json_schema(p: SchemaProperty) -> dict:
+    """Convert a SchemaProperty to a JSON Schema property object."""
+    if p.ref:
+        base: dict = {"$ref": f"#/components/schemas/{p.ref}"}
+    elif p.enum_values:
+        base = {"type": "string", "enum": p.enum_values}
+    else:
+        base = {"type": p.type}
+        if p.format:
+            base["format"] = p.format
+
+    if p.is_array:
+        schema: dict = {"type": "array", "items": base}
+    else:
+        schema = base
+
+    if p.nullable:
+        schema["nullable"] = True
+
+    return schema
 
 
 # --- State Models ---

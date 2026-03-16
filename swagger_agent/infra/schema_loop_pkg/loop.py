@@ -382,21 +382,22 @@ def run_schema_loop(
                             f"    Extracted {record.schema_count} schema(s) in "
                             f"{record.duration_ms:.0f}ms"
                         )
+                    schemas_dict = descriptor.to_json_schema_dict()
                     _emit("extracted", name=schema_name, file=str(file_path),
                           count=record.schema_count,
                           duration_ms=record.duration_ms,
-                          schema_names=list(descriptor.schemas.keys()))
+                          schema_names=list(schemas_dict.keys()))
                     extracted_files.add(str(file_path))
 
                     if "." in schema_name:
                         leaf = schema_name.rsplit(".", 1)[1]
-                        for extracted_name, extracted_schema in descriptor.schemas.items():
+                        for extracted_name, extracted_schema in schemas_dict.items():
                             if extracted_name == leaf:
                                 round_new_schemas[schema_name] = extracted_schema
                             else:
                                 round_new_schemas[extracted_name] = extracted_schema
                     else:
-                        round_new_schemas.update(descriptor.schemas)
+                        round_new_schemas.update(schemas_dict)
 
                     if schema_name not in round_new_schemas:
                         lower_map = {

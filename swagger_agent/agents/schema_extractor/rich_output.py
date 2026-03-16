@@ -39,18 +39,13 @@ def print_schemas_table(descriptor: SchemaDescriptor, console: Console | None = 
     table.add_column("Required", width=10, justify="right")
     table.add_column("Has $ref", width=10)
 
-    for name, schema in descriptor.schemas.items():
-        props = schema.get("properties", {})
-        required = schema.get("required", [])
-        has_ref = any(
-            "$ref" in v or (isinstance(v.get("items"), dict) and "$ref" in v["items"])
-            for v in props.values()
-        )
+    for schema in descriptor.schemas:
+        has_ref = any(p.ref for p in schema.properties)
 
         table.add_row(
-            name,
-            str(len(props)),
-            str(len(required)),
+            schema.name,
+            str(len(schema.properties)),
+            str(len(schema.required_fields)),
             "[green]yes[/green]" if has_ref else "[dim]no[/dim]",
         )
 

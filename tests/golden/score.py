@@ -200,17 +200,38 @@ def score_security_schemes(spec: dict, golden: dict) -> dict:
 # Schema helpers — composite matching with Hungarian assignment
 # ---------------------------------------------------------------------------
 
-def extract_property_names(schema: dict) -> set[str]:
-    """Extract top-level property names from an OpenAPI schema object."""
-    return set(schema.get("properties", {}).keys())
+def extract_property_names(schema: dict, all_schemas: dict[str, dict] | None = None,
+                           _visited: set[str] | None = None) -> set[str]:
+    """Extract property names from an OpenAPI schema object.
+
+    Handles allOf composition by collecting properties from all sub-schemas,
+    including resolving $ref targets transitively.
+    """
+    if _visited is None:
+        _visited = set()
+    all_schemas = all_schemas or {}
+
+    props = set(schema.get("properties", {}).keys())
+    for sub in schema.get("allOf", []):
+        if isinstance(sub, dict):
+            ref = sub.get("$ref", "")
+            if ref.startswith("#/components/schemas/"):
+                ref_name = ref[len("#/components/schemas/"):]
+                if ref_name not in _visited and ref_name in all_schemas:
+                    _visited.add(ref_name)
+                    props |= extract_property_names(all_schemas[ref_name], all_schemas, _visited)
+            else:
+                props |= set(sub.get("properties", {}).keys())
+    return props
 
 
 def extract_schemas_from_spec(spec: dict) -> dict[str, set[str]]:
     """Extract {name: property_names} from spec, excluding unresolved placeholders."""
+    all_schemas = spec.get("components", {}).get("schemas", {})
     result = {}
-    for name, schema in spec.get("components", {}).get("schemas", {}).items():
+    for name, schema in all_schemas.items():
         if not schema.get("x-unresolved"):
-            result[name.lower()] = {p.lower() for p in extract_property_names(schema)}
+            result[name.lower()] = {p.lower() for p in extract_property_names(schema, all_schemas)}
     return result
 
 
