@@ -233,6 +233,25 @@ def run_pipeline(
                         best_score = score
                         best_match = rf
 
+                # If no match in route_files, search the same directory on disk
+                if not best_match or best_score < 5:
+                    source_dir = os.path.dirname(source_file)
+                    abs_source_dir = str(target_path / source_dir) if source_dir else str(target_path)
+                    if os.path.isdir(abs_source_dir):
+                        for fname in os.listdir(abs_source_dir):
+                            fpath = os.path.join(source_dir, fname) if source_dir else fname
+                            if fpath == source_file or fpath in prefixes:
+                                continue
+                            fstem = os.path.splitext(fname)[0]
+                            fstem_norm = fstem.lower().replace("_", "").replace("-", "").replace(".", "")
+                            if key_norm == fstem_norm:
+                                best_match = fpath
+                                best_score = 100
+                                # Add to route_files so it gets extracted in Round 1.5
+                                if fpath not in route_files:
+                                    route_files.append(fpath)
+                                break
+
                 if best_match and best_match not in prefixes:
                     prefixes[best_match] = prefix
         return prefixes
@@ -303,11 +322,25 @@ def run_pipeline(
         if not db:
             console.print(f"  Re-extracting {len(mount_prefixes)} file(s) with mount prefixes: "
                           f"{mount_prefixes}")
+        next_idx = max(results_by_idx.keys(), default=0) + 1
         for rf, prefix in mount_prefixes.items():
             idx_for_rf = next(
                 (idx for idx, (f, *_) in results_by_idx.items() if f == rf), None
             )
             if idx_for_rf is None:
+                # Newly discovered file from mount_map — extract fresh with prefix
+                if not db:
+                    console.print(f"  Extracting (from mount_map): [bold]{rf}[/bold] (mount: {prefix})")
+                _, route_file, descriptor, record, error = _extract_one_route(
+                    next_idx, rf, mount_prefix=prefix,
+                )
+                results_by_idx[next_idx] = (route_file, descriptor, record, error)
+                next_idx += 1
+                if error:
+                    if not db:
+                        console.print(f"    [red]Failed:[/red] {error}")
+                elif not db:
+                    console.print(f"    {record.endpoint_count} endpoint(s) with prefix {prefix}")
                 continue
             _, route_file, descriptor, record, error = _extract_one_route(
                 idx_for_rf, rf, mount_prefix=prefix,
