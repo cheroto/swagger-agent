@@ -10,7 +10,7 @@ import yaml
 
 from swagger_agent.models import DiscoveryManifest, EndpointDescriptor, Endpoint, SecurityRequirement
 
-from .path_utils import _normalize_path, _reconcile_path_params, normalize_path_template
+from .path_utils import _normalize_path, extract_path_params, normalize_path_template
 from .schema_fixups import (
     _break_ref_cycles,
     _deduplicate_operation_ids,
@@ -240,21 +240,43 @@ def _derive_security_scheme(name: str) -> dict:
 
 def _build_operation(
     ep: Endpoint,
+    path_key: str,
     ref_rewrite: dict[str, str] | None = None,
 ) -> dict:
-    """Build an OpenAPI operation object from an Endpoint model."""
+    """Build an OpenAPI operation object from an Endpoint model.
+
+    Path parameters are derived from {param} segments in path_key.
+    The LLM only outputs query/header/cookie params in ep.parameters.
+    """
     op: dict = {"operationId": ep.operation_id}
 
     if ep.tags:
         op["tags"] = ep.tags
 
+    # Derive path params from the path template (infrastructure, not LLM)
+    path_param_names = extract_path_params(path_key)
+    path_param_name_set = set(path_param_names)
+
+    # Build parameters: path params first (from path), then LLM params
+    # Filter out any LLM params whose name collides with a path param
+    params: list[dict] = []
+    for name in path_param_names:
+        params.append({"name": name, "in": "path", "required": True, "schema": {"type": "string"}})
+
     if ep.parameters:
-        seen: dict[tuple[str, str], dict] = {}
+        seen: set[tuple[str, str]] = {(name, "path") for name in path_param_names}
         for p in ep.parameters:
             dumped = p.model_dump(by_alias=True, exclude_none=True)
+            # Skip if name collides with a path param
+            if dumped["name"] in path_param_name_set:
+                continue
             key = (dumped["name"], dumped["in"])
-            seen[key] = dumped
-        op["parameters"] = list(seen.values())
+            if key not in seen:
+                seen.add(key)
+                params.append(dumped)
+
+    if params:
+        op["parameters"] = params
 
     if ep.request_body:
         rb = ep.request_body
@@ -344,8 +366,6 @@ def assemble_spec(
             path_key = _normalize_path(manifest.base_path, ep.path)
             method = ep.method.lower()
 
-            _reconcile_path_params(path_key, ep)
-
             # Detect OAS-identical paths (same template, different param names)
             norm_key = normalize_path_template(path_key)
             if norm_key in norm_to_canonical and norm_to_canonical[norm_key] != path_key:
@@ -369,7 +389,7 @@ def assemble_spec(
                 )
                 continue
 
-            op = _build_operation(ep, ref_rewrite)
+            op = _build_operation(ep, path_key, ref_rewrite)
 
             # Auto-inject 401/403 for protected endpoints missing error responses
             if ep.security and len(ep.security) > 0:

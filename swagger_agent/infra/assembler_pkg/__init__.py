@@ -7,8 +7,7 @@ __all__ = [
     "AssemblyResult", "assemble_spec",
     "_build_ref", "_build_schema_for_ref", "_build_operation", "_derive_security_scheme", "_scheme_type_to_openapi",
     "_parse_ref_hint", "_parse_union_ref_hint", "_sanitize_ref_hint",
-    "_normalize_path", "_reconcile_path_params", "_replace_outside_braces",
-    "_sanitize_path_template",
+    "_normalize_path", "extract_path_params", "normalize_path_template",
     "_break_ref_cycles", "_coerce_to_schema", "_deduplicate_operation_ids",
     "_extract_refs_from_schema", "_fix_ref_siblings", "_normalize_schema_case",
     "_sanitize_schemas",
@@ -31,9 +30,8 @@ from .assemble import (  # noqa: F401
 )
 from .path_utils import (  # noqa: F401
     _normalize_path,
-    _reconcile_path_params,
-    _replace_outside_braces,
-    _sanitize_path_template,
+    extract_path_params,
+    normalize_path_template,
 )
 from .schema_fixups import (  # noqa: F401
     _break_ref_cycles,

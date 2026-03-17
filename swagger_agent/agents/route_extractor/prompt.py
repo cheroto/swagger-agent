@@ -6,8 +6,6 @@ Phase 2 (build_phase2_prompt): Dynamically assembled extraction prompt.
 
 from __future__ import annotations
 
-import re
-
 from swagger_agent.models import CodeAnalysis
 
 
@@ -32,8 +30,8 @@ _PHASE2_OUTPUT_FORMAT = """\
 - Combine base_path + router-level prefix + endpoint-level path. Convert path parameters to OpenAPI {param} syntax.
 - For serverless handlers with no route decorators, infer path from directory/filename structure and HTTP method from filename prefix or code behavior.
 - For route resource declarations, expand into individual CRUD endpoints.
-- Every path parameter segment in the URL must have a matching Parameter object.
-- Each endpoint's parameters are independent — do not share between endpoints.
+- Path parameters are derived automatically from {param} segments in the path — do NOT add them to the parameters list.
+- Each endpoint's parameters (query/header/cookie only) are independent — do not share between endpoints.
 - Extract ALL endpoints in the file. Do not skip any.
 - source_file is set by the harness — ignore it.
 
@@ -109,13 +107,9 @@ def build_phase2_prompt(
     # --- Endpoint checklist ---
     if analysis.endpoints:
         sections.append(f"\n## Endpoint Checklist ({len(analysis.endpoints)} endpoints)\n")
-        sections.append("You MUST extract at least these endpoints. Each endpoint's parameters are independent — do NOT mix parameters between endpoints.\n")
+        sections.append("You MUST extract at least these endpoints.\n")
         for i, ep in enumerate(analysis.endpoints, 1):
-            path_params = _extract_path_params(ep.path)
             sections.append(f"  {i}. {ep.method} {ep.path} → handler: {ep.handler_name}")
-            if path_params:
-                sections.append(f"     REQUIRED path params ({len(path_params)}): {', '.join(path_params)}")
-                sections.append(f"     → You MUST output {len(path_params)} Parameter(s) with in=\"path\" for this endpoint")
         sections.append("\nExtract any additional endpoints you find beyond this list.")
 
     # --- Static output format ---
@@ -123,17 +117,6 @@ def build_phase2_prompt(
     sections.append(_PHASE2_OUTPUT_FORMAT)
 
     return "\n".join(sections)
-
-
-def _extract_path_params(path: str) -> list[str]:
-    """Extract path parameter names from a URL path.
-
-    Handles {param}, :param, and <param> syntax.
-    """
-    params = re.findall(r"\{(\w+)\}", path)
-    params += re.findall(r":(\w+)", path)
-    params += re.findall(r"<(\w+)>", path)
-    return params
 
 
 def _scheme_name_from_type(scheme_type: str) -> str:

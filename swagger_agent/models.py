@@ -98,8 +98,8 @@ class SecurityRequirement(BaseModel):
 
 class Parameter(BaseModel):
     name: str = Field(description="Parameter name as it appears in the code.")
-    in_: Literal["path", "query", "header", "cookie"] = Field(alias="in", description="Parameter location.")
-    required: bool = Field(default=False, description="True for path params (always required) and any explicitly required query/header params.")
+    in_: Literal["query", "header", "cookie"] = Field(alias="in", description="Parameter location: query, header, or cookie. Do NOT include path parameters — they are derived automatically from the URL path template.")
+    required: bool = Field(default=False, description="True for explicitly required query/header params.")
     schema_: dict = Field(default_factory=dict, alias="schema", description="JSON Schema for the parameter type, e.g. {'type': 'string'}, {'type': 'integer', 'format': 'int64'}.")
 
     model_config = {"populate_by_name": True}
@@ -118,11 +118,11 @@ class Response(BaseModel):
 
 class Endpoint(BaseModel):
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] = Field(description="HTTP method (uppercase). Only standard HTTP methods — do not include WebSocket, gRPC, or other non-HTTP protocols.")
-    path: str = Field(description="Full path including base_path. Use OpenAPI parameter syntax {param} — convert from framework syntax (:param → {param}, <param> → {param}, <int:param> → {param}). Strip route constraints, optional markers, catch-all prefixes.")
+    path: str = Field(description="Full path including base_path. Use OpenAPI {param} syntax for all path parameters — convert from any framework syntax (:param → {param}, <param> → {param}, <int:param> → {param}). Strip route constraints ({id:int} → {id}), optional markers ({id?} → {id}), catch-all prefixes ({*slug} → {slug}). Path parameters are derived from this string automatically — do NOT add them to the parameters list.")
     operation_id: str = Field(description="Derived from the handler function name (e.g. 'getUser', 'create_article').")
     tags: list[str] = Field(default_factory=list, description="Grouping tags derived from controller/router name, e.g. ['Articles'].")
     security: list[SecurityRequirement] = Field(default_factory=list, description="Security requirements. [] = public (no auth). Always set, never omit. When context has default_auth_mode='all': set auth on EVERY endpoint UNLESS the auth context shows an explicit skip/exclude/except/AllowAnonymous/permitAll for this endpoint's controller — only those exceptions get []. When default_auth_mode='per-endpoint': set auth ONLY on endpoints with explicit auth markers (decorators, guards, middleware) in the code; all others get []. When default_auth_mode is empty or 'none': set [] unless the code explicitly requires auth. Auth wrappers with 'optional' flag (e.g. optional=true) always get [].")
-    parameters: list[Parameter] = Field(default_factory=list)
+    parameters: list[Parameter] = Field(default_factory=list, description="Query, header, and cookie parameters only. Path parameters are derived automatically from {param} segments in the path — do NOT include them here.")
     request_body: RequestBody | None = Field(default=None, description="Include for any endpoint that consumes a request body. For POST/PUT/PATCH with unknown body shape, provide with schema_ref resolution='unresolvable'. Set null ONLY for bodyless endpoints (GET, DELETE, state toggles).")
     request_body_reason: str = Field(default="", description="When request_body is null on POST/PUT/PATCH, explain why: 'state toggle', 'action endpoint', 'webhook callback', 'no body evidence in code'. Empty string when request_body is provided or method is GET/DELETE.")
     responses: list[Response] = Field(default_factory=list, description="All response codes including errors. Auth endpoints must have 401. Endpoints with path params should have 404.")

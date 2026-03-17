@@ -19,7 +19,6 @@ from swagger_agent.models import (
     DiscoveryManifest,
     Endpoint,
     EndpointDescriptor,
-    Parameter,
     RefHint,
     RequestBody,
     Response,
@@ -236,7 +235,6 @@ class TestRequestBodyFalsePositive:
                     path="/items/{id}",
                     operation_id="updateItem",
                     security=[SecurityRequirement(name="BearerAuth", scheme_type="bearer")],
-                    parameters=[Parameter(name="id", **{"in": "path"}, required=True)],
                     request_body=RequestBody(
                         content_type="application/json",
                         schema_ref=_unresolvable_ref("UpdateItemRequest"),
@@ -249,7 +247,6 @@ class TestRequestBodyFalsePositive:
                     path="/items/{id}/complete",
                     operation_id="completeItem",
                     security=[SecurityRequirement(name="BearerAuth", scheme_type="bearer")],
-                    parameters=[Parameter(name="id", **{"in": "path"}, required=True)],
                     responses=[Response(status_code="200", description="OK", schema_ref=_unresolvable_ref())],
                 ),
             ]),
