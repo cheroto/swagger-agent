@@ -1,0 +1,13 @@
+tests/e2e/repos/
+.cache/
+outputs/
+.env
+.git
+.DS_Store
+.benchmarks/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
