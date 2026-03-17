@@ -137,10 +137,11 @@ PHASES = [
     (2, "Route Extraction"),
     (3, "Schema Resolution"),
     (4, "Assembly"),
-    (5, "Validation"),
+    (5, "Spec Cleanup"),
+    (6, "Validation"),
 ]
 
-_LEVEL_FOR_PHASE = {0: 1, 1: 1, 2: 2, 3: 3, 4: 3, 5: 3}  # prescan+scout=1, routes=2, schemas+=3
+_LEVEL_FOR_PHASE = {0: 1, 1: 1, 2: 2, 3: 3, 4: 3, 5: 3, 6: 3}  # prescan+scout=1, routes=2, schemas+=3
 _LEVEL_NAMES = {1: "Scout", 2: "Extractor", 3: "Architect"}
 
 

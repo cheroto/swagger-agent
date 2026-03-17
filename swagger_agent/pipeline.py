@@ -33,6 +33,7 @@ from swagger_agent.infra.schema_loop import (
     run_schema_loop,
 )
 from swagger_agent.infra.assembler import AssemblyResult, assemble_spec
+from swagger_agent.infra.spec_fixer import SpecFixResult, fix_spec
 from swagger_agent.infra.validator import ValidationResult, validate_spec, check_completeness
 from swagger_agent.telemetry import Telemetry
 
@@ -483,11 +484,48 @@ def run_pipeline(
     else:
         console.print(f"[bold]Assembled:[/bold] {assembly_summary}")
 
-    # ── Phase 5: Validation ──
+    # ── Phase 5: Spec Cleanup ──
     if db:
-        db.phase_start(5, "Validation")
+        db.phase_start(5, "Spec Cleanup")
     else:
-        console.print(Rule(" Phase 5: Validation ", style="bold blue"))
+        console.print(Rule(" Phase 5: Spec Cleanup ", style="bold blue"))
+    t0 = time.monotonic()
+
+    fix_result = fix_spec(result.spec)
+    if fix_result.total_fixes > 0:
+        # Re-serialize YAML since spec dict was mutated
+        import yaml
+
+        class _NoAliasDumper(yaml.SafeDumper):
+            def ignore_aliases(self, data):
+                return True
+
+        result.yaml_str = yaml.dump(
+            result.spec,
+            Dumper=_NoAliasDumper,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )
+
+    result.timings["spec_cleanup"] = (time.monotonic() - t0) * 1000
+
+    cleanup_summary = f"{fix_result.total_fixes} fix(es) applied"
+    if db:
+        db.phase_complete(5, cleanup_summary)
+    else:
+        if fix_result.total_fixes > 0:
+            console.print(f"[bold]Spec cleanup:[/bold] {fix_result.total_fixes} fix(es) applied")
+            for fix in fix_result.fixes_applied:
+                console.print(f"  [dim]{fix}[/dim]")
+        else:
+            console.print("[dim]Spec cleanup: no fixes needed[/dim]")
+
+    # ── Phase 6: Validation ──
+    if db:
+        db.phase_start(6, "Validation")
+    else:
+        console.print(Rule(" Phase 6: Validation ", style="bold blue"))
     t0 = time.monotonic()
 
     result.validation = validate_spec(result.spec)
@@ -504,7 +542,7 @@ def run_pipeline(
             validation_summary = f"Clean, {warn_count} warning(s)"
         else:
             validation_summary = "Clean"
-        db.phase_complete(5, validation_summary)
+        db.phase_complete(6, validation_summary)
     else:
         if result.validation.errors:
             console.print(f"[red]Validation errors: {err_count}[/red]")
