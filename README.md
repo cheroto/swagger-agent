@@ -36,6 +36,48 @@ python -m swagger_agent owner/repo --ref v2.0    # specific branch/tag/commit
 - [Universal Ctags](https://ctags.io/) (`brew install universal-ctags` / `apt install universal-ctags`)
 - An OpenAI-compatible LLM API endpoint
 
+### Docker
+
+No Python or ctags installation needed — everything is bundled in the image.
+
+```bash
+# Build the image
+docker build -t swagger-agent .
+
+# Scan a local repo
+docker run --rm \
+  -v /path/to/project:/work \
+  -v swagger-cache:/app/.cache \
+  -v ./outputs:/app/outputs \
+  --env-file .env \
+  swagger-agent /work
+
+# Scan a remote repo
+docker run --rm \
+  -v swagger-cache:/app/.cache \
+  -v ./outputs:/app/outputs \
+  --env-file .env \
+  swagger-agent owner/repo
+
+# Score results against golden test data
+docker run --rm \
+  -v ./outputs:/app/outputs \
+  --entrypoint python \
+  swagger-agent tests/golden/score.py /app/outputs/
+```
+
+Or use Docker Compose:
+
+```bash
+# Scan a local repo
+TARGET_DIR=/path/to/project docker compose run --rm swagger-agent
+
+# Scan a remote repo
+docker compose run --rm swagger-agent python -m swagger_agent owner/repo
+```
+
+The `swagger-cache` named volume persists LLM response cache across runs, avoiding redundant API calls. Configure your LLM backend in `.env` (copy from `.env.example`).
+
 ## How it works
 
 The system has two layers: **LLM-powered agents** that interpret source code, and **deterministic infrastructure** that manages artifacts, resolves references, assembles the spec, and validates it.
