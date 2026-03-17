@@ -1,10 +1,10 @@
 services:
   swagger-agent:
     build: .
-    env_file: .env
     volumes:
       - swagger-cache:/app/.cache
       - ./outputs:/app/outputs
+      - ./.env:/app/.env:ro
       - ${TARGET_DIR:-.}:/work
     entrypoint: ["python", "-m", "swagger_agent", "/work"]
 
