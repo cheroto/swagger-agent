@@ -96,7 +96,7 @@ uvicorn swagger_agent.server:app --host 0.0.0.0 --port 8000
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/generate` | Submit a job, returns `202` with `{job_id, status}` immediately |
-| `GET` | `/jobs/{id}` | Poll job status. Returns `{job_id, status, spec, yaml, timings}` when done |
+| `GET` | `/jobs/{id}` | Poll job status and live progress. Returns spec/yaml/timings when done |
 | `GET` | `/jobs/{id}/yaml` | Download gzipped YAML (only when job is done) |
 | `GET` | `/health` | Health check |
 
@@ -132,9 +132,14 @@ curl -X POST http://localhost:8000/generate \
   -d '{"repo_url": "https://github.com/owner/repo.git"}'
 # → {"job_id": "a1b2c3d4", "status": "pending"}
 
-# Poll for result
+# Poll for status and progress
 curl http://localhost:8000/jobs/a1b2c3d4
-# → {"job_id": "a1b2c3d4", "status": "done", "spec": {...}, "yaml": "...", "timings": {...}}
+# → {"job_id": "a1b2c3d4", "status": "running", "progress": {
+#      "phase": "Route Extraction", "routes_done": 1, "routes_total": 3,
+#      "endpoints_found": 4, "schemas_resolved": 0,
+#      "log": ["Cloned in 650ms", "Phase 1: Scout", "Extracting users.py (1/3)", ...]
+#    }}
+# When done: includes "spec", "yaml", "timings" fields
 
 # Specific tag
 curl -X POST http://localhost:8000/generate \
@@ -306,4 +311,4 @@ tests/
 
 ## License
 
-Private / Internal use.
+All rights reserved. Source code is publicly viewable but may not be used, copied, modified, or distributed without explicit permission from the author.
