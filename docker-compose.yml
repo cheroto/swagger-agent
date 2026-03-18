@@ -18,6 +18,8 @@ services:
       - "${SERVER_PORT:-8000}:8000"
     volumes:
       - swagger-cache:/app/.cache
+      # Uncomment to mount SSH keys for git clone over SSH:
+      # - ${HOME}/.ssh:/root/.ssh:ro
     env_file:
       - path: .env
         required: false
