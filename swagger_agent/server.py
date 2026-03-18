@@ -1,7 +1,7 @@
 """Webhook server — accepts a repo URL, runs the pipeline, returns the spec.
 
 All generation is async: POST /generate returns a job ID immediately,
-GET /jobs/{id} polls for the result.
+GET /jobs/{id} polls for the result with live progress.
 """
 
 from __future__ import annotations
@@ -53,19 +53,119 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+class JobProgress(BaseModel):
+    phase: str = ""
+    phase_number: int = 0
+    routes_total: int = 0
+    routes_done: int = 0
+    routes_failed: int = 0
+    endpoints_found: int = 0
+    schemas_resolved: int = 0
+    schemas_unresolved: int = 0
+    log: list[str] = Field(default_factory=list)
+
+
 class JobResponse(BaseModel):
     job_id: str
     status: JobStatus
     error: str = ""
+    progress: JobProgress = Field(default_factory=JobProgress)
     spec: dict | None = None
     yaml: str | None = None
     timings: dict | None = None
 
 
+# ── Progress collector (implements dashboard interface) ────────────────────
+
+class _ProgressCollector:
+    """Lightweight dashboard substitute that collects pipeline events on a job.
+
+    Implements the subset of dashboard/event_handler methods the pipeline
+    and Scout harness call. Unknown method calls are silently ignored.
+    """
+
+    def __init__(self, job: _Job):
+        self._job = job
+        self._lock = threading.Lock()
+
+    def __getattr__(self, name):
+        """Silently ignore any dashboard/event_handler method we don't implement."""
+        return lambda *args, **kwargs: None
+
+    def _log(self, msg: str) -> None:
+        with self._lock:
+            self._job.progress_log.append(msg)
+            # Cap log size
+            if len(self._job.progress_log) > 100:
+                self._job.progress_log = self._job.progress_log[-80:]
+
+    def phase_start(self, phase: int, name: str) -> None:
+        with self._lock:
+            self._job.phase = name
+            self._job.phase_number = phase
+        self._log(f"Phase {phase}: {name}")
+
+    def phase_complete(self, phase: int, summary: str) -> None:
+        self._log(f"Phase {phase} done: {summary}")
+
+    def route_start(self, file: str, index: int, total: int) -> None:
+        short = file.rsplit("/", 1)[-1]
+        with self._lock:
+            self._job.routes_total = total
+        self._log(f"Extracting {short} ({index}/{total})")
+
+    def route_complete(self, file: str, endpoints: int, duration_ms: float) -> None:
+        short = file.rsplit("/", 1)[-1]
+        with self._lock:
+            self._job.routes_done += 1
+            self._job.endpoints_found += endpoints
+        self._log(f"{short}: {endpoints} endpoint(s) ({duration_ms:.0f}ms)")
+
+    def route_failed(self, file: str, error: str) -> None:
+        short = file.rsplit("/", 1)[-1]
+        with self._lock:
+            self._job.routes_failed += 1
+        self._log(f"{short}: FAILED — {error}")
+
+    def route_endpoints_discovered(self, descriptor) -> None:
+        pass  # Already counted in route_complete
+
+    def schema_event(self, event: str, **kwargs) -> None:
+        if event == "extracted":
+            count = kwargs.get("count", 0)
+            file = str(kwargs.get("file", "?")).rsplit("/", 1)[-1]
+            with self._lock:
+                self._job.schemas_resolved += count
+            self._log(f"Schema: {file} → {count} schema(s)")
+        elif event == "resolving" and not kwargs.get("file"):
+            name = kwargs.get("name", "?")
+            with self._lock:
+                self._job.schemas_unresolved += 1
+            self._log(f"Schema: {name} — unresolved")
+        elif event == "extract_failed":
+            name = kwargs.get("name", "?")
+            with self._lock:
+                self._job.schemas_unresolved += 1
+            self._log(f"Schema: {name} — extraction failed")
+
+    def assembly_complete(self, paths: int, schemas: int) -> None:
+        self._log(f"Assembled: {paths} path(s), {schemas} schema(s)")
+
+    def validation_complete(self, errors: int, warnings: int) -> None:
+        if errors:
+            self._log(f"Validation: {errors} error(s), {warnings} warning(s)")
+        else:
+            self._log(f"Validation: clean ({warnings} warning(s))")
+
+
 # ── Job store (in-memory) ─────────────────────────────────────────────────
 
 class _Job:
-    __slots__ = ("id", "status", "error", "spec", "yaml", "timings", "created_at")
+    __slots__ = (
+        "id", "status", "error", "spec", "yaml", "timings", "created_at",
+        "phase", "phase_number", "routes_total", "routes_done", "routes_failed",
+        "endpoints_found", "schemas_resolved", "schemas_unresolved", "progress_log",
+    )
 
     def __init__(self, job_id: str):
         self.id = job_id
@@ -75,6 +175,29 @@ class _Job:
         self.yaml: str | None = None
         self.timings: dict | None = None
         self.created_at = time.monotonic()
+        # Progress fields
+        self.phase = ""
+        self.phase_number = 0
+        self.routes_total = 0
+        self.routes_done = 0
+        self.routes_failed = 0
+        self.endpoints_found = 0
+        self.schemas_resolved = 0
+        self.schemas_unresolved = 0
+        self.progress_log: list[str] = []
+
+    def to_progress(self) -> JobProgress:
+        return JobProgress(
+            phase=self.phase,
+            phase_number=self.phase_number,
+            routes_total=self.routes_total,
+            routes_done=self.routes_done,
+            routes_failed=self.routes_failed,
+            endpoints_found=self.endpoints_found,
+            schemas_resolved=self.schemas_resolved,
+            schemas_unresolved=self.schemas_unresolved,
+            log=list(self.progress_log),
+        )
 
 
 _jobs: dict[str, _Job] = {}
@@ -141,6 +264,7 @@ def _clone_repo(req: GenerateRequest, job: _Job) -> str:
 
     clone_ms = (time.monotonic() - t0) * 1000
     logger.info("[%s] Cloned in %.0fms → %s", job.id, clone_ms, tmp_dir)
+    job.progress_log.append(f"Cloned in {clone_ms:.0f}ms")
     return tmp_dir
 
 
@@ -150,8 +274,12 @@ def _run_job(req: GenerateRequest, job: _Job) -> None:
     try:
         tmp_dir = _clone_repo(req, job)
         job.status = JobStatus.RUNNING
+        collector = _ProgressCollector(job)
         t0 = time.monotonic()
-        result = run_pipeline(target_dir=tmp_dir, config=LLMConfig(), skip_scout=False)
+        result = run_pipeline(
+            target_dir=tmp_dir, config=LLMConfig(),
+            skip_scout=False, dashboard=collector,
+        )
         pipeline_ms = (time.monotonic() - t0) * 1000
 
         job.spec = result.spec
@@ -194,7 +322,7 @@ def generate(req: GenerateRequest) -> JobResponse:
 
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str) -> JobResponse:
-    """Poll for job status and results."""
+    """Poll for job status, progress, and results."""
     with _jobs_lock:
         job = _jobs.get(job_id)
     if not job:
@@ -204,6 +332,7 @@ def get_job(job_id: str) -> JobResponse:
         job_id=job.id,
         status=job.status,
         error=job.error,
+        progress=job.to_progress(),
         spec=job.spec if job.status == JobStatus.DONE else None,
         yaml=job.yaml if job.status == JobStatus.DONE else None,
         timings=job.timings if job.status == JobStatus.DONE else None,
