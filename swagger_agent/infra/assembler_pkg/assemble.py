@@ -345,6 +345,27 @@ def _build_operation(
     return op
 
 
+# ── Server helpers ────────────────────────────────────────────────────────
+
+def _build_servers(discovered: list[str]) -> list[dict]:
+    """Build the servers array with an editable blank URL entry.
+
+    Uses an OpenAPI server variable so Swagger UI renders an input box
+    where the user types their target server URL.
+    """
+    return [
+        {
+            "url": "{server}",
+            "variables": {
+                "server": {
+                    "default": "",
+                    "description": "Target server URL",
+                }
+            },
+        }
+    ]
+
+
 # ── Main assembly ────────────────────────────────────────────────────────
 
 def assemble_spec(
@@ -359,7 +380,7 @@ def assemble_spec(
     spec: dict = {
         "openapi": "3.0.3",
         "info": {"title": "API Specification", "version": "1.0.0"},
-        "servers": [{"url": s} for s in manifest.servers] or [{"url": "http://localhost:8080"}],
+        "servers": _build_servers(manifest.servers),
         "paths": {},
         "components": {"schemas": {}, "securitySchemes": {}},
     }
