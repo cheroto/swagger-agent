@@ -28,7 +28,9 @@ _API_KEY = os.environ.get("SWAGGER_AGENT_API_KEY", "")
 
 class GenerateRequest(BaseModel):
     repo_url: str = Field(description="Git repository URL (HTTPS or SSH)")
-    branch: str = Field(default="", description="Branch to checkout. Empty = default branch.")
+    branch: str = Field(default="", description="Branch name to checkout. Empty = default branch. Mutually exclusive with tag and commit.")
+    tag: str = Field(default="", description="Tag to checkout (e.g. 'v1.2.3'). Mutually exclusive with branch and commit.")
+    commit: str = Field(default="", description="Full commit SHA to checkout. Requires a full clone (slower). Mutually exclusive with branch and tag.")
     token: str = Field(default="", description="Git auth token for private repos. Injected into HTTPS clone URL as oauth2 credentials.")
 
 
@@ -46,41 +48,66 @@ def _inject_token(url: str, token: str) -> str:
     return url.replace("https://", f"https://oauth2:{token}@", 1)
 
 
-def _clone_repo(url: str, branch: str, token: str) -> str:
-    """Shallow-clone a repo to a temp directory. Returns the path."""
+def _clone_repo(url: str, branch: str, tag: str, commit: str, token: str) -> str:
+    """Clone a repo to a temp directory at the requested ref. Returns the path.
+
+    - branch/tag: shallow clone with --branch (fast)
+    - commit: full clone + checkout (slower, needed for arbitrary SHAs)
+    - none: shallow clone of default branch
+    """
     # Per-request token takes priority, then GIT_TOKEN env var, then host git credentials
     effective_token = token or os.environ.get("GIT_TOKEN", "")
     clone_url = _inject_token(url, effective_token)
     tmp_dir = os.path.join(tempfile.gettempdir(), f"swagger-agent-{uuid.uuid4().hex[:12]}")
 
-    cmd = ["git", "clone", "--depth", "1"]
-    if branch:
-        cmd.extend(["--branch", branch])
-    cmd.extend([clone_url, tmp_dir])
+    ref = branch or tag
+    needs_full_clone = bool(commit)
+
+    if needs_full_clone:
+        cmd = ["git", "clone", clone_url, tmp_dir]
+    else:
+        cmd = ["git", "clone", "--depth", "1"]
+        if ref:
+            cmd.extend(["--branch", ref])
+        cmd.extend([clone_url, tmp_dir])
 
     try:
         subprocess.run(
             cmd, check=True, capture_output=True, text=True, timeout=120,
         )
+        if commit:
+            subprocess.run(
+                ["git", "checkout", commit],
+                cwd=tmp_dir, check=True, capture_output=True, text=True, timeout=30,
+            )
     except subprocess.CalledProcessError as e:
         # Sanitize: never leak token in error messages
         stderr = e.stderr
         if effective_token:
             stderr = stderr.replace(effective_token, "***")
-        raise HTTPException(status_code=400, detail=f"Git clone failed: {stderr.strip()}")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=f"Git clone/checkout failed: {stderr.strip()}")
     except subprocess.TimeoutExpired:
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(status_code=408, detail="Git clone timed out (120s)")
+        raise HTTPException(status_code=408, detail="Git clone timed out")
 
     return tmp_dir
+
+
+def _validate_ref(req: GenerateRequest) -> None:
+    """Ensure at most one of branch/tag/commit is set."""
+    refs = [r for r in (req.branch, req.tag, req.commit) if r]
+    if len(refs) > 1:
+        raise HTTPException(status_code=422, detail="Only one of branch, tag, or commit may be specified.")
 
 
 @app.post("/generate", response_model=GenerateResponse)
 def generate(req: GenerateRequest):
     """Clone a repo and generate an OpenAPI spec from it."""
+    _validate_ref(req)
     tmp_dir = None
     try:
-        tmp_dir = _clone_repo(req.repo_url, req.branch, req.token)
+        tmp_dir = _clone_repo(req.repo_url, req.branch, req.tag, req.commit, req.token)
         config = LLMConfig()
         result = run_pipeline(target_dir=tmp_dir, config=config, skip_scout=False)
 
@@ -97,9 +124,10 @@ def generate(req: GenerateRequest):
 @app.post("/generate/yaml")
 def generate_yaml(req: GenerateRequest):
     """Clone a repo and return the OpenAPI spec as gzipped YAML."""
+    _validate_ref(req)
     tmp_dir = None
     try:
-        tmp_dir = _clone_repo(req.repo_url, req.branch, req.token)
+        tmp_dir = _clone_repo(req.repo_url, req.branch, req.tag, req.commit, req.token)
         config = LLMConfig()
         result = run_pipeline(target_dir=tmp_dir, config=config, skip_scout=False)
 
