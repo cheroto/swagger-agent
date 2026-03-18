@@ -364,17 +364,25 @@ def assemble_spec(
         "components": {"schemas": {}, "securitySchemes": {}},
     }
 
-    # Security schemes — collect SecurityRequirement objects from all endpoints
+    # Security schemes — collect SecurityRequirement objects from all endpoints.
+    # Aggregate scopes across all endpoints into one scheme definition, since
+    # OpenAPI securitySchemes must declare all available scopes.
     all_schemes: dict[str, SecurityRequirement] = {}
+    scheme_scopes: dict[str, set[str]] = {}
     for desc in descriptors:
         for ep in desc.endpoints:
             for req in ep.security:
                 if req.name not in all_schemes:
                     all_schemes[req.name] = req
+                    scheme_scopes[req.name] = set(req.scopes)
+                else:
+                    scheme_scopes[req.name].update(req.scopes)
 
     for name in sorted(all_schemes):
         req = all_schemes[name]
-        spec["components"]["securitySchemes"][name] = _scheme_type_to_openapi(req)
+        # Build a merged requirement with all scopes for the scheme definition
+        merged = req.model_copy(update={"scopes": sorted(scheme_scopes.get(name, set()))})
+        spec["components"]["securitySchemes"][name] = _scheme_type_to_openapi(merged)
 
     if not spec["components"]["securitySchemes"]:
         del spec["components"]["securitySchemes"]
