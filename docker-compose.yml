@@ -22,7 +22,7 @@ services:
       - path: .env
         required: false
     environment:
-      - SWAGGER_AGENT_API_KEY=${SWAGGER_AGENT_API_KEY:-}
+      # Only needed for HTTPS clones of private repos (not needed for SSH)
       - GIT_TOKEN=${GIT_TOKEN:-}
     entrypoint: ["uvicorn", "swagger_agent.server:app", "--host", "0.0.0.0", "--port", "8000"]
 
