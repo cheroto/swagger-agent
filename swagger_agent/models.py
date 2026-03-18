@@ -26,22 +26,6 @@ class RefHint(BaseModel):
 # --- Discovery Manifest ---
 
 
-class SecurityScheme(BaseModel):
-    name: str
-    type: Literal["http", "apiKey", "oauth2", "openIdConnect"]
-    scheme: str | None = None
-    bearer_format: str | None = None
-    in_: Literal["header", "query", "cookie"] | None = Field(None, alias="in")
-    source_file: str | None = None
-
-    model_config = {"populate_by_name": True}
-
-
-class ErrorModel(BaseModel):
-    name: str
-    source_file: str | None = None
-
-
 class DiscoveryManifest(BaseModel):
     framework: str
     language: str
@@ -66,7 +50,7 @@ class AuthPattern(BaseModel):
     """Observed auth mechanism from Phase 1."""
     mechanism: str = Field(description="How auth is applied: 'middleware in handler chain', 'decorator', 'annotation', 'dependency injection'.")
     indicator: str = Field(description="The exact code marker, e.g. 'auth.required', '@PreAuthorize', '[Authorize]', 'Depends(get_current_user)'.")
-    scheme_type: Literal["bearer", "apikey", "cookie", "basic", "oauth2", "unknown"] = Field(description="Auth type. Prefer the type explicitly declared in the source code (e.g., SecuritySchemeType.ApiKey → 'apikey', cookie_sessions → 'cookie') over inference from token format.")
+    scheme_type: Literal["bearer", "apikey", "cookie", "basic", "oauth2", "unknown"] = Field(description="Auth type. Key signals: oauth_scopes/scopes/scope parameter → 'oauth2'. API key read from header/query → 'apikey'. Cookie/session read → 'cookie'. HTTP Basic → 'basic'. JWT/token in Authorization header with NO scopes → 'bearer'. When both token and scopes are present, prefer 'oauth2' over 'bearer'.")
     applies_to: Literal["all", "per-endpoint", "group"] = Field(description="Scope: 'all' = class/router level applies to every endpoint, 'per-endpoint' = each endpoint explicitly marked, 'group' = middleware group wraps a subset of endpoints.")
 
 
@@ -89,8 +73,12 @@ class CodeAnalysis(BaseModel):
 
 
 class SecurityRequirement(BaseModel):
-    name: Literal["BearerAuth", "ApiKeyAuth", "BasicAuth", "OAuth2", "CookieAuth"] = Field(description="Security scheme name. Must match the auth mechanism: BearerAuth for JWT/token, ApiKeyAuth for API keys, BasicAuth for HTTP Basic, OAuth2 for OAuth2 flows, CookieAuth for cookie/session auth.")
-    scheme_type: Literal["bearer", "apikey", "basic", "oauth2", "cookie"] = Field(description="Auth mechanism: 'bearer' for JWT/token in Authorization header, 'apikey' for API key in header/query, 'basic' for HTTP Basic, 'oauth2' for OAuth2 flows, 'cookie' for cookie-based session auth.")
+    name: Literal["BearerAuth", "ApiKeyAuth", "BasicAuth", "OAuth2", "CookieAuth"] = Field(description="Security scheme name matching scheme_type: BearerAuth↔bearer, ApiKeyAuth↔apikey, BasicAuth↔basic, OAuth2↔oauth2, CookieAuth↔cookie.")
+    scheme_type: Literal["bearer", "apikey", "basic", "oauth2", "cookie"] = Field(description="Auth mechanism. Use 'oauth2' when scopes are involved (oauth_scopes, scope parameters, scope decorators) even if tokens are bearer-format. Use 'bearer' only for JWT/token auth with NO scopes. 'apikey' for API key in header/query. 'basic' for HTTP Basic. 'cookie' for cookie/session auth.")
+    oauth2_flow: Literal["authorizationCode", "clientCredentials", "implicit", "password", ""] = Field(default="", description="OAuth2 flow type when scheme_type='oauth2': 'authorizationCode' for code grant (redirect-based), 'clientCredentials' for machine-to-machine (no user), 'implicit' for legacy browser flows, 'password' for username/password login. '' when not oauth2 or unknown. Infer from code: redirect_uri/authorization_code → 'authorizationCode', client_credentials grant → 'clientCredentials', password/login forms → 'password'.")
+    scopes: list[str] = Field(default_factory=list, description="OAuth2 scopes required by this endpoint. Extract from scope decorators, guards, or middleware args (e.g. oauth_scopes=['read:users'], @PreAuthorize('SCOPE_read'), scope='admin'). Empty list when no scopes declared. If scopes are present, scheme_type MUST be 'oauth2' and name MUST be 'OAuth2'.")
+    apikey_name: str = Field(default="", description="The header, query, or cookie parameter name for API key auth. Extract from code: the exact string used to read the key (e.g. req.header('X-API-Key') → 'X-API-Key', query.get('api_key') → 'api_key'). '' when not apikey or name unknown.")
+    apikey_in: Literal["header", "query", "cookie"] = Field(default="header", description="Where the API key is passed. Infer from code: header extraction → 'header', query param → 'query', cookie read → 'cookie'. Only meaningful when scheme_type='apikey'.")
 
 
 # --- Endpoint Descriptor ---
@@ -121,7 +109,7 @@ class Endpoint(BaseModel):
     path: str = Field(description="Full path including base_path. Use OpenAPI {param} syntax for all path parameters — convert from any framework syntax (:param → {param}, <param> → {param}, <int:param> → {param}). Strip route constraints ({id:int} → {id}), optional markers ({id?} → {id}), catch-all prefixes ({*slug} → {slug}). Path parameters are derived from this string automatically — do NOT add them to the parameters list.")
     operation_id: str = Field(description="Derived from the handler function name (e.g. 'getUser', 'create_article').")
     tags: list[str] = Field(default_factory=list, description="Grouping tags derived from controller/router name, e.g. ['Articles'].")
-    security: list[SecurityRequirement] = Field(default_factory=list, description="Security requirements. [] = public (no auth). Always set, never omit. When context has default_auth_mode='all': set auth on EVERY endpoint UNLESS the auth context shows an explicit skip/exclude/except/AllowAnonymous/permitAll for this endpoint's controller — only those exceptions get []. When default_auth_mode='per-endpoint': set auth ONLY on endpoints with explicit auth markers (decorators, guards, middleware) in the code; all others get []. When default_auth_mode is empty or 'none': set [] unless the code explicitly requires auth. Auth wrappers with 'optional' flag (e.g. optional=true) always get [].")
+    security: list[SecurityRequirement] = Field(default_factory=list, description="Security requirements. [] = public (no auth). Always set, never omit. Check auth decorators/guards at EXACTLY the right level: a decorator on a specific method (def get) does NOT apply to sibling methods (def post) in the same class — only class-level or router-level decorators apply to all methods. When default_auth_mode='all': set auth on EVERY endpoint UNLESS explicit skip/AllowAnonymous/permitAll. When default_auth_mode='per-endpoint': set auth ONLY on endpoints with explicit auth markers on THIS method or its class/router; all others get []. When default_auth_mode is empty or 'none': set [] unless the code explicitly requires auth. Auth wrappers with 'optional' flag always get [].")
     parameters: list[Parameter] = Field(default_factory=list, description="Query, header, and cookie parameters only. Path parameters are derived automatically from {param} segments in the path — do NOT include them here.")
     request_body: RequestBody | None = Field(default=None, description="Include for any endpoint that consumes a request body. For POST/PUT/PATCH with unknown body shape, provide with schema_ref resolution='unresolvable'. Set null ONLY for bodyless endpoints (GET, DELETE, state toggles).")
     request_body_reason: str = Field(default="", description="When request_body is null on POST/PUT/PATCH, explain why: 'state toggle', 'action endpoint', 'webhook callback', 'no body evidence in code'. Empty string when request_body is provided or method is GET/DELETE.")

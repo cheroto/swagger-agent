@@ -207,34 +207,68 @@ def _build_ref(name: str) -> dict:
 
 # ── Operation / security helpers ─────────────────────────────────────────
 
-def _scheme_type_to_openapi(scheme_type: str) -> dict:
-    """Map a SecurityRequirement.scheme_type to an OpenAPI securitySchemes entry."""
+def _scheme_type_to_openapi(req: SecurityRequirement) -> dict:
+    """Map a SecurityRequirement to an OpenAPI securitySchemes entry.
+
+    Uses enriched fields (oauth2_flow, token_url, scopes, apikey_name, etc.)
+    when populated; falls back to sensible defaults when fields are empty.
+    """
+    scheme_type = req.scheme_type
+
     if scheme_type == "bearer":
         return {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+
     if scheme_type == "apikey":
-        return {"type": "apiKey", "in": "header", "name": "X-API-Key"}
+        return {
+            "type": "apiKey",
+            "in": req.apikey_in,
+            "name": req.apikey_name or "X-API-Key",
+        }
+
     if scheme_type == "basic":
         return {"type": "http", "scheme": "basic"}
+
     if scheme_type == "oauth2":
-        return {
-            "type": "oauth2",
-            "flows": {"implicit": {"authorizationUrl": "", "scopes": {}}},
-        }
+        scopes_dict = {s: "" for s in req.scopes} if req.scopes else {}
+        flow = req.oauth2_flow
+
+        if flow == "authorizationCode":
+            flow_obj = {
+                "authorizationCode": {
+                    "authorizationUrl": "",
+                    "tokenUrl": "",
+                    "scopes": scopes_dict,
+                }
+            }
+        elif flow == "clientCredentials":
+            flow_obj = {
+                "clientCredentials": {
+                    "tokenUrl": "",
+                    "scopes": scopes_dict,
+                }
+            }
+        elif flow == "implicit":
+            flow_obj = {
+                "implicit": {
+                    "authorizationUrl": "",
+                    "scopes": scopes_dict,
+                }
+            }
+        else:
+            # Default to password flow (most permissive)
+            flow_obj = {
+                "password": {
+                    "tokenUrl": "",
+                    "scopes": scopes_dict,
+                }
+            }
+
+        return {"type": "oauth2", "flows": flow_obj}
+
     if scheme_type == "cookie":
         return {"type": "apiKey", "in": "cookie", "name": "session"}
+
     # Fallback for unknown types
-    return {"type": "http", "scheme": "bearer"}
-
-
-def _derive_security_scheme(name: str) -> dict:
-    """Heuristic: map a security scheme name to an OpenAPI securitySchemes entry."""
-    low = name.lower()
-    if any(k in low for k in ("bearer", "jwt", "token")):
-        return {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
-    if any(k in low for k in ("apikey", "api_key", "api-key")):
-        return {"type": "apiKey", "in": "header", "name": "X-API-Key"}
-    if "basic" in low:
-        return {"type": "http", "scheme": "basic"}
     return {"type": "http", "scheme": "bearer"}
 
 
@@ -306,7 +340,7 @@ def _build_operation(
     if len(ep.security) == 0:
         op["security"] = []
     else:
-        op["security"] = [{req.name: []} for req in ep.security]
+        op["security"] = [{req.name: req.scopes if req.scopes else []} for req in ep.security]
 
     return op
 
@@ -340,7 +374,7 @@ def assemble_spec(
 
     for name in sorted(all_schemes):
         req = all_schemes[name]
-        spec["components"]["securitySchemes"][name] = _scheme_type_to_openapi(req.scheme_type)
+        spec["components"]["securitySchemes"][name] = _scheme_type_to_openapi(req)
 
     if not spec["components"]["securitySchemes"]:
         del spec["components"]["securitySchemes"]
