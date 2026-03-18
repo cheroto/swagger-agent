@@ -6,7 +6,7 @@ A multi-agent system that generates OpenAPI 3.0 specifications from arbitrary co
 
 - Analyzes any web application codebase (Spring Boot, FastAPI, Express, ASP.NET, Laravel, Go, Rust, serverless, etc.)
 - Extracts all HTTP endpoints with methods, paths, parameters, request bodies, and response codes
-- Identifies authentication schemes and per-endpoint security requirements
+- Identifies authentication schemes (OAuth2 with flow types and scopes, Bearer, API key, Basic, Cookie) with per-endpoint security requirements
 - Extracts schema definitions with validation constraints from model files
 - Outputs a valid OpenAPI 3.0 YAML spec
 
@@ -77,6 +77,80 @@ docker compose run --rm swagger-agent python -m swagger_agent owner/repo
 ```
 
 The `swagger-cache` named volume persists LLM response cache across runs, avoiding redundant API calls. Configure your LLM backend in `.env` (copy from `.env.example`).
+
+### Webhook Server
+
+Run as an HTTP service that accepts repo URLs and returns generated specs:
+
+```bash
+# Start the server
+docker compose up swagger-server
+
+# Or without Docker
+pip install -e '.[server]'
+uvicorn swagger_agent.server:app --host 0.0.0.0 --port 8000
+```
+
+**Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/generate` | Returns spec as JSON (`{spec, yaml, timings}`) |
+| `POST` | `/generate/yaml` | Returns gzipped YAML binary |
+| `GET` | `/health` | Health check |
+
+**Request body:**
+
+```json
+{
+  "repo_url": "https://github.com/owner/repo.git",
+  "branch": "develop",
+  "tag": "",
+  "commit": "",
+  "token": ""
+}
+```
+
+- `branch`, `tag`, `commit` — pin to an exact ref (only one allowed per request). Branch and tag use shallow clone (fast). Commit requires a full clone.
+- `token` — git auth token for private repos (injected into HTTPS URL)
+
+**Private repo auth** (in order of priority):
+
+1. Per-request `token` field
+2. `GIT_TOKEN` env var (set in `.env` or docker compose)
+3. Host SSH keys (mounted via `~/.ssh` in docker-compose.yml)
+4. Host gitconfig credential helpers (mounted via `~/.gitconfig`)
+5. GitHub CLI auth (uncomment `~/.config/gh` mount in docker-compose.yml)
+
+**Examples:**
+
+```bash
+# Public repo, default branch
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/owner/repo.git"}'
+
+# Specific tag
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/owner/repo.git", "tag": "v2.1.0"}'
+
+# Exact commit
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/owner/repo.git", "commit": "a1b2c3d4..."}'
+
+# Private repo with token
+curl -X POST http://localhost:8000/generate \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/org/private-repo.git", "token": "ghp_xxxx"}'
+
+# Download gzipped YAML
+curl -X POST http://localhost:8000/generate/yaml \
+  -H "Content-Type: application/json" \
+  -d '{"repo_url": "https://github.com/owner/repo.git"}' \
+  --output openapi.yaml.gz
+```
 
 ## How it works
 
@@ -218,6 +292,7 @@ swagger_agent/
   config.py         # LLM configuration (env vars / .env)
   models.py         # Pydantic models for all artifacts
   pipeline.py       # Main pipeline orchestration
+  server.py         # FastAPI webhook server
   telemetry.py      # Per-call LLM metrics collection
   dashboard.py      # Rich live terminal dashboard
 tests/
