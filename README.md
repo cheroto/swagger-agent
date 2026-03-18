@@ -95,11 +95,12 @@ uvicorn swagger_agent.server:app --host 0.0.0.0 --port 8000
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/generate` | Returns spec as JSON (`{spec, yaml, timings}`) |
-| `POST` | `/generate/yaml` | Returns gzipped YAML binary |
+| `POST` | `/generate` | Submit a job, returns `202` with `{job_id, status}` immediately |
+| `GET` | `/jobs/{id}` | Poll job status. Returns `{job_id, status, spec, yaml, timings}` when done |
+| `GET` | `/jobs/{id}/yaml` | Download gzipped YAML (only when job is done) |
 | `GET` | `/health` | Health check |
 
-**Request body:**
+**Request body** (for `POST /generate`):
 
 ```json
 {
@@ -114,42 +115,39 @@ uvicorn swagger_agent.server:app --host 0.0.0.0 --port 8000
 - `branch`, `tag`, `commit` — pin to an exact ref (only one allowed per request). Branch and tag use shallow clone (fast). Commit requires a full clone.
 - `token` — git auth token for private repos (injected into HTTPS URL)
 
+**Job statuses:** `pending` → `cloning` → `running` → `done` (or `failed`)
+
 **Private repo auth** (in order of priority):
 
 1. Per-request `token` field
 2. `GIT_TOKEN` env var (set in `.env` or docker compose)
-3. Host SSH keys (mounted via `~/.ssh` in docker-compose.yml)
-4. Host gitconfig credential helpers (mounted via `~/.gitconfig`)
-5. GitHub CLI auth (uncomment `~/.config/gh` mount in docker-compose.yml)
+3. Host SSH keys (mount `~/.ssh` — see commented-out line in docker-compose.yml)
 
 **Examples:**
 
 ```bash
-# Public repo, default branch
+# Submit a job
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/owner/repo.git"}'
+# → {"job_id": "a1b2c3d4", "status": "pending"}
+
+# Poll for result
+curl http://localhost:8000/jobs/a1b2c3d4
+# → {"job_id": "a1b2c3d4", "status": "done", "spec": {...}, "yaml": "...", "timings": {...}}
 
 # Specific tag
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/owner/repo.git", "tag": "v2.1.0"}'
 
-# Exact commit
-curl -X POST http://localhost:8000/generate \
-  -H "Content-Type: application/json" \
-  -d '{"repo_url": "https://github.com/owner/repo.git", "commit": "a1b2c3d4..."}'
-
 # Private repo with token
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{"repo_url": "https://github.com/org/private-repo.git", "token": "ghp_xxxx"}'
 
-# Download gzipped YAML
-curl -X POST http://localhost:8000/generate/yaml \
-  -H "Content-Type: application/json" \
-  -d '{"repo_url": "https://github.com/owner/repo.git"}' \
-  --output openapi.yaml.gz
+# Download gzipped YAML when done
+curl http://localhost:8000/jobs/a1b2c3d4/yaml --output openapi.yaml.gz
 ```
 
 ## How it works

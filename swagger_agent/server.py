@@ -1,4 +1,8 @@
-"""Webhook server — accepts a repo URL, runs the pipeline, returns the spec."""
+"""Webhook server — accepts a repo URL, runs the pipeline, returns the spec.
+
+All generation is async: POST /generate returns a job ID immediately,
+GET /jobs/{id} polls for the result.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +12,10 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
+from enum import Enum
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -29,6 +35,8 @@ logger = logging.getLogger("swagger_agent.server")
 app = FastAPI(title="Swagger Agent", description="Generate OpenAPI specs from code repositories")
 
 
+# ── Models ────────────────────────────────────────────────────────────────
+
 class GenerateRequest(BaseModel):
     repo_url: str = Field(description="Git repository URL (HTTPS or SSH)")
     branch: str = Field(default="", description="Branch name to checkout. Empty = default branch. Mutually exclusive with tag and commit.")
@@ -37,11 +45,43 @@ class GenerateRequest(BaseModel):
     token: str = Field(default="", description="Git auth token for private repos. Injected into HTTPS clone URL as oauth2 credentials.")
 
 
-class GenerateResponse(BaseModel):
-    spec: dict = Field(description="The assembled OpenAPI 3.0 spec as JSON")
-    yaml: str = Field(description="The assembled OpenAPI 3.0 spec as YAML")
-    timings: dict = Field(default_factory=dict)
+class JobStatus(str, Enum):
+    PENDING = "pending"
+    CLONING = "cloning"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
 
+
+class JobResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    error: str = ""
+    spec: dict | None = None
+    yaml: str | None = None
+    timings: dict | None = None
+
+
+# ── Job store (in-memory) ─────────────────────────────────────────────────
+
+class _Job:
+    __slots__ = ("id", "status", "error", "spec", "yaml", "timings", "created_at")
+
+    def __init__(self, job_id: str):
+        self.id = job_id
+        self.status = JobStatus.PENDING
+        self.error = ""
+        self.spec: dict | None = None
+        self.yaml: str | None = None
+        self.timings: dict | None = None
+        self.created_at = time.monotonic()
+
+
+_jobs: dict[str, _Job] = {}
+_jobs_lock = threading.Lock()
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────
 
 def _ref_label(req: GenerateRequest) -> str:
     """Human-readable label for the requested git ref."""
@@ -61,11 +101,12 @@ def _inject_token(url: str, token: str) -> str:
     return url.replace("https://", f"https://oauth2:{token}@", 1)
 
 
-def _clone_repo(req: GenerateRequest, request_id: str) -> str:
+def _clone_repo(req: GenerateRequest, job: _Job) -> str:
     """Clone a repo to a temp directory at the requested ref. Returns the path."""
+    job.status = JobStatus.CLONING
     effective_token = req.token or os.environ.get("GIT_TOKEN", "")
     clone_url = _inject_token(req.repo_url, effective_token)
-    tmp_dir = os.path.join(tempfile.gettempdir(), f"swagger-agent-{request_id}")
+    tmp_dir = os.path.join(tempfile.gettempdir(), f"swagger-agent-{job.id}")
 
     ref = req.branch or req.tag
     needs_full_clone = bool(req.commit)
@@ -90,64 +131,96 @@ def _clone_repo(req: GenerateRequest, request_id: str) -> str:
         stderr = e.stderr
         if effective_token:
             stderr = stderr.replace(effective_token, "***")
-        logger.error("[%s] Clone failed: %s", request_id, stderr.strip())
+        logger.error("[%s] Clone failed: %s", job.id, stderr.strip())
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail=f"Git clone/checkout failed: {stderr.strip()}")
+        raise RuntimeError(f"Git clone/checkout failed: {stderr.strip()}")
     except subprocess.TimeoutExpired:
-        logger.error("[%s] Clone timed out after 120s", request_id)
+        logger.error("[%s] Clone timed out after 120s", job.id)
         shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(status_code=408, detail="Git clone timed out")
+        raise RuntimeError("Git clone timed out")
 
     clone_ms = (time.monotonic() - t0) * 1000
-    logger.info("[%s] Cloned in %.0fms → %s", request_id, clone_ms, tmp_dir)
+    logger.info("[%s] Cloned in %.0fms → %s", job.id, clone_ms, tmp_dir)
     return tmp_dir
 
 
-def _validate_and_run(req: GenerateRequest):
-    """Validate the request, clone, run pipeline, clean up. Returns PipelineResult."""
-    refs = [r for r in (req.branch, req.tag, req.commit) if r]
-    if len(refs) > 1:
-        raise HTTPException(status_code=422, detail="Only one of branch, tag, or commit may be specified.")
-
-    request_id = uuid.uuid4().hex[:8]
-    logger.info("[%s] Request: %s (%s)", request_id, req.repo_url, _ref_label(req))
-
+def _run_job(req: GenerateRequest, job: _Job) -> None:
+    """Run the full pipeline in a background thread."""
     tmp_dir = None
     try:
-        tmp_dir = _clone_repo(req, request_id)
+        tmp_dir = _clone_repo(req, job)
+        job.status = JobStatus.RUNNING
         t0 = time.monotonic()
         result = run_pipeline(target_dir=tmp_dir, config=LLMConfig(), skip_scout=False)
         pipeline_ms = (time.monotonic() - t0) * 1000
 
+        job.spec = result.spec
+        job.yaml = result.yaml_str
+        job.timings = result.timings
+        job.status = JobStatus.DONE
+
         ep_count = sum(len(d.endpoints) for d in result.descriptors)
-        schema_count = len(result.schemas)
         logger.info(
             "[%s] Done: %d endpoints, %d schemas, %.1fs",
-            request_id, ep_count, schema_count, pipeline_ms / 1000,
+            job.id, ep_count, len(result.schemas), pipeline_ms / 1000,
         )
-        return result
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.exception("[%s] Pipeline failed: %s", request_id, e)
-        raise HTTPException(status_code=500, detail=f"Pipeline failed: {e}")
+        job.status = JobStatus.FAILED
+        job.error = str(e)
+        logger.exception("[%s] Failed: %s", job.id, e)
     finally:
         if tmp_dir and os.path.isdir(tmp_dir):
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-@app.post("/generate", response_model=GenerateResponse)
-def generate(req: GenerateRequest):
-    """Clone a repo and generate an OpenAPI spec from it."""
-    result = _validate_and_run(req)
-    return GenerateResponse(spec=result.spec, yaml=result.yaml_str, timings=result.timings)
+# ── Endpoints ─────────────────────────────────────────────────────────────
+
+@app.post("/generate", status_code=202)
+def generate(req: GenerateRequest) -> JobResponse:
+    """Submit a spec generation job. Returns immediately with a job ID."""
+    refs = [r for r in (req.branch, req.tag, req.commit) if r]
+    if len(refs) > 1:
+        raise HTTPException(status_code=422, detail="Only one of branch, tag, or commit may be specified.")
+
+    job = _Job(uuid.uuid4().hex[:8])
+    with _jobs_lock:
+        _jobs[job.id] = job
+
+    logger.info("[%s] Job submitted: %s (%s)", job.id, req.repo_url, _ref_label(req))
+    threading.Thread(target=_run_job, args=(req, job), daemon=True).start()
+
+    return JobResponse(job_id=job.id, status=job.status)
 
 
-@app.post("/generate/yaml")
-def generate_yaml(req: GenerateRequest):
-    """Clone a repo and return the OpenAPI spec as gzipped YAML."""
-    result = _validate_and_run(req)
-    compressed = gzip.compress(result.yaml_str.encode("utf-8"))
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str) -> JobResponse:
+    """Poll for job status and results."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return JobResponse(
+        job_id=job.id,
+        status=job.status,
+        error=job.error,
+        spec=job.spec if job.status == JobStatus.DONE else None,
+        yaml=job.yaml if job.status == JobStatus.DONE else None,
+        timings=job.timings if job.status == JobStatus.DONE else None,
+    )
+
+
+@app.get("/jobs/{job_id}/yaml")
+def get_job_yaml(job_id: str):
+    """Download the generated spec as gzipped YAML. Only available when job is done."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != JobStatus.DONE:
+        raise HTTPException(status_code=409, detail=f"Job is {job.status.value}, not done yet")
+
+    compressed = gzip.compress(job.yaml.encode("utf-8"))
     return Response(
         content=compressed,
         media_type="application/x-yaml",
