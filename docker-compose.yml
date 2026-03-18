@@ -1,4 +1,5 @@
 services:
+  # CLI mode: run against a local directory
   swagger-agent:
     build: .
     volumes:
@@ -7,6 +8,25 @@ services:
       - ./.env:/app/.env:ro
       - ${TARGET_DIR:-.}:/work
     entrypoint: ["python", "-m", "swagger_agent", "/work"]
+
+  # Server mode: webhook API that clones repos and generates specs
+  swagger-server:
+    build: .
+    ports:
+      - "${SERVER_PORT:-8000}:8000"
+    volumes:
+      - swagger-cache:/app/.cache
+      - ./.env:/app/.env:ro
+      # Mount host git credentials for private repo access (optional)
+      - ${HOME}/.gitconfig:/root/.gitconfig:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
+      # Uncomment for GitHub CLI auth:
+      # - ${HOME}/.config/gh:/root/.config/gh:ro
+    environment:
+      - SWAGGER_AGENT_API_KEY=${SWAGGER_AGENT_API_KEY:-}
+      # Pass host git token for HTTPS auth (optional, used by git credential helper)
+      - GIT_TOKEN=${GIT_TOKEN:-}
+    entrypoint: ["uvicorn", "swagger_agent.server:app", "--host", "0.0.0.0", "--port", "8000"]
 
 volumes:
   swagger-cache:
