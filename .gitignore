@@ -10,3 +10,5 @@ build/
 outputs/
 .cache/
 tests/e2e/repos/
+.claude/
+CLAUDE.md
