@@ -309,6 +309,41 @@ tests/
 - **Lazy schema extraction**: Only extracts models reachable from route type references. Never scans the full model tree.
 - **Working output over perfect output**: Emits what it can extract, uses reasonable defaults for what it can't. Never blocks on missing information.
 
+## Accuracy and completeness
+
+This system uses LLM agents to interpret source code, which makes output **non-deterministic** — the same codebase may produce slightly different specs across runs. This is a deliberate tradeoff, not a defect.
+
+### Why partial specs still have value
+
+For penetration testing, a partial spec is dramatically more useful than no spec at all. In practice, most APIs have no OpenAPI spec whatsoever, and those that do are frequently incomplete or stale:
+
+- **55% of developers** cite lack of documentation as the #1 barrier to consuming APIs ([Postman State of the API, 2023](https://www.postman.com/state-of-api/))
+- **74% of organizations** lack a complete inventory of their APIs ([Traceable AI, 2023](https://www.traceable.ai/resources/global-state-of-api-security-report))
+- **50%+ of organizations** struggle to keep manually maintained specs in sync with code ([SmartBear State of API Report](https://smartbear.com/state-of-software-quality/api/))
+
+OWASP lists [Improper Inventory Management](https://owasp.org/API-Security/editions/2023/en/0xaa-unsafe-consumption-of-apis/) — undocumented and shadow endpoints — as a top API security risk. A pentester working from an auto-generated 70% complete spec has a better starting point than one working from a manually maintained spec that silently omits half the endpoints, or no spec at all.
+
+### How we measure quality
+
+Rather than targeting 100% accuracy (which even hand-written specs rarely achieve), we use an **F1 scoring system** against manually curated golden test data across 9 production frameworks:
+
+| Metric | What it measures |
+|--------|-----------------|
+| **Endpoint F1** | Detected endpoints vs. ground truth (method + path) |
+| **Schema F1** | Schema extraction quality (name similarity + property coverage) |
+| **Security Scheme F1** | Correct identification of auth mechanisms |
+| **Auth Accuracy** | Per-endpoint auth classification (public vs. protected) |
+
+F1 scoring captures both **precision** (did we emit junk?) and **recall** (did we miss real endpoints?). This lets us systematically improve extraction quality across diverse frameworks without chasing perfection on any single one.
+
+```bash
+# Score pipeline output against golden data
+python tests/golden/score.py /tmp/swagger-test/
+
+# Verbose output with fuzzy match details
+python tests/golden/score.py /tmp/swagger-test/rest-api-node.json --verbose
+```
+
 ## License
 
 All rights reserved. Source code is publicly viewable but may not be used, copied, modified, or distributed without explicit permission from the author.
