@@ -252,6 +252,15 @@ class StateSummary(BaseModel):
 # --- Scout Working State ---
 
 
+SCOUT_TASK_NAMES: list[str] = [
+    "identify_framework",
+    "find_route_files",
+    "find_servers",
+]
+"""Canonical task names for the Scout agent. Single source of truth used by
+ScoutWorkingState (default remaining_tasks) and StateUpdates (enum constraint)."""
+
+
 class ScoutWorkingState(BaseModel):
     """Re-injected at every ReAct step to prevent context loss."""
 
@@ -261,8 +270,4 @@ class ScoutWorkingState(BaseModel):
     servers: list[str] = []
     base_path: str = ""
     scratchpad: str = ""
-    remaining_tasks: list[str] = [
-        "identify_framework",
-        "find_route_files",
-        "find_servers",
-    ]
+    remaining_tasks: list[str] = list(SCOUT_TASK_NAMES)

@@ -12,18 +12,20 @@ response — not tool calls the LLM can forget.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from swagger_agent.config import LLMConfig
 from swagger_agent.models import (
     DiscoveryManifest,
+    SCOUT_TASK_NAMES,
     ScoutWorkingState,
 )
 from swagger_agent.agents.scout.prompt import SCOUT_SYSTEM_PROMPT
@@ -34,9 +36,20 @@ from swagger_agent.telemetry import LLMCall, Telemetry, measure_messages
 logger = logging.getLogger("swagger_agent.scout")
 
 MAX_SCOUT_TURNS = 50
+STALL_THRESHOLD = 3  # consecutive identical action sets before warning
+STALL_FORCE_THRESHOLD = 3  # additional repeats after warning before force-terminate
 
 
 # --- Structured turn response (enforced by instructor) ---
+
+
+# Build Literal type from the canonical task name list so the JSON schema
+# emits an enum constraint — grammar-level enforcement in json_schema mode
+# prevents the LLM from hallucinating task names.
+ScoutTaskLiteral = Literal["identify_framework", "find_route_files", "find_servers"]
+assert set(SCOUT_TASK_NAMES) == set(ScoutTaskLiteral.__args__), (  # type: ignore[attr-defined]
+    "ScoutTaskLiteral and SCOUT_TASK_NAMES are out of sync"
+)
 
 
 class StateUpdates(BaseModel):
@@ -47,7 +60,7 @@ class StateUpdates(BaseModel):
     route_files: list[str] | None = None
     servers: list[str] | None = None
     base_path: str | None = None
-    completed_tasks: list[str] = Field(
+    completed_tasks: list[ScoutTaskLiteral] = Field(
         default_factory=list,
         description="Task names to mark as complete and remove from remaining_tasks",
     )
@@ -299,11 +312,21 @@ def state_to_manifest(state: ScoutWorkingState) -> DiscoveryManifest:
 # --- Prompt Builder ---
 
 
+def _hash_actions(actions: list[ScoutAction]) -> str:
+    """Deterministic hash of a turn's actions (tool names + arguments)."""
+    canonical = json.dumps(
+        [(a.tool, a.arguments) for a in actions],
+        sort_keys=True, default=str,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
 def build_turn_messages(
     target_dir: str,
     trace: DeterministicTrace,
     state: ScoutWorkingState,
     last_action_results: list[dict] | None,
+    stall_warning: bool = False,
 ) -> list[dict]:
     """Build the full prompt for a single turn from the three state layers."""
     messages = [
@@ -328,6 +351,17 @@ def build_turn_messages(
             parts.append(f"- {task}")
     else:
         parts.append("ALL TASKS COMPLETE - call write_artifact now.")
+
+    if stall_warning:
+        parts.append("\n## ⚠ STALL WARNING\n")
+        parts.append(
+            "You have repeated the same actions multiple turns in a row. "
+            "You MUST do something different NOW:\n"
+            "- If remaining_tasks is empty: call write_artifact immediately.\n"
+            "- If remaining_tasks has items: mark them as completed_tasks "
+            "(the data is already in structured findings) and call write_artifact.\n"
+            "- Do NOT repeat the same tool calls again."
+        )
 
     if last_action_results is not None:
         parts.append("\n## Results from Last Turn\n")
@@ -377,6 +411,12 @@ class ScoutEventHandler:
 
     def on_max_turns(self, turn: int) -> None:
         logger.warning("Scout hit max turns (%d), serializing current state", turn)
+
+    def on_stall_warning(self, turn: int, consecutive: int) -> None:
+        logger.warning("Scout stall detected at turn %d (%d identical action sets)", turn, consecutive)
+
+    def on_stall_force_terminate(self, turn: int, consecutive: int) -> None:
+        logger.warning("Scout force-terminated at turn %d after %d stalled turns", turn, consecutive)
 
     def on_llm_error(self, turn: int, error: Exception, retries_left: int) -> None:
         logger.error("Scout turn %d LLM error (%d retries left): %s", turn, retries_left, error)
@@ -436,12 +476,28 @@ def run_scout(
     run_record = ScoutRunRecord(target_dir=target_dir, trace=trace)
     run_start = time.monotonic()
 
+    # Stall detection state
+    _recent_action_hashes: list[str] = []
+    _stall_warned = False
+    _stall_warn_turn = 0
+
     for turn in range(1, MAX_SCOUT_TURNS + 1):
         turn_start = time.monotonic()
         trace.turn_count = turn
         event_handler.on_turn_start(turn, state.remaining_tasks)
 
-        messages = build_turn_messages(target_dir, trace, state, last_action_results)
+        # Check for force-termination after warning was ignored
+        if _stall_warned:
+            turns_since_warn = turn - _stall_warn_turn
+            if turns_since_warn >= STALL_FORCE_THRESHOLD:
+                event_handler.on_stall_force_terminate(turn, len(_recent_action_hashes))
+                run_record.termination_reason = "stall_force_terminate"
+                break
+
+        messages = build_turn_messages(
+            target_dir, trace, state, last_action_results,
+            stall_warning=_stall_warned,
+        )
 
         llm_input_chars = measure_messages(messages)
         llm_start = time.monotonic()
@@ -481,7 +537,19 @@ def run_scout(
         state_updates_dict = turn_response.state_updates.model_dump(exclude_none=True)
         event_handler.on_state_update(turn, turn_response.state_updates, state.remaining_tasks)
 
-        # 3. Execute actions (exploration tools + write_artifact only)
+        # 3. Stall detection — track action hashes before executing
+        action_hash = _hash_actions(turn_response.actions)
+        if _recent_action_hashes and _recent_action_hashes[-1] == action_hash:
+            _recent_action_hashes.append(action_hash)
+        else:
+            _recent_action_hashes = [action_hash]
+
+        if not _stall_warned and len(_recent_action_hashes) >= STALL_THRESHOLD:
+            _stall_warned = True
+            _stall_warn_turn = turn
+            event_handler.on_stall_warning(turn, len(_recent_action_hashes))
+
+        # 4. Execute actions (exploration tools + write_artifact only)
         last_action_results = []
 
         # Surface guard rejections so the LLM can self-correct
@@ -593,13 +661,14 @@ def run_scout(
             duration_ms=turn_duration,
         ))
 
-    # Safety net: max turns reached
-    event_handler.on_max_turns(MAX_SCOUT_TURNS)
+    # Fallback: loop ended without write_artifact (max turns or stall force-terminate)
+    if run_record.termination_reason != "stall_force_terminate":
+        event_handler.on_max_turns(MAX_SCOUT_TURNS)
+        run_record.termination_reason = "max_turns"
     manifest = state_to_manifest(state)
     event_handler.on_manifest(manifest)
 
     run_record.final_state = state.model_dump(by_alias=True)
     run_record.manifest = manifest.model_dump(by_alias=True, exclude_none=True)
     run_record.total_duration_ms = (time.monotonic() - run_start) * 1000
-    run_record.termination_reason = "max_turns"
     return manifest, run_record
