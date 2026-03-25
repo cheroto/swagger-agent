@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from swagger_agent.infra.detectors._utils import read_file_safe
+from swagger_agent.infra.detectors._utils import glob_files, read_file_safe
 from swagger_agent.infra.detectors.framework._base import FrameworkDetector
 
 _JAVA_FRAMEWORKS: list[tuple[str, str]] = [
@@ -18,6 +18,12 @@ _JAVA_FRAMEWORKS: list[tuple[str, str]] = [
 ]
 
 
+def _detect_kotlin(target_dir: str) -> bool:
+    """Check if the project has Kotlin source files."""
+    kt_files = glob_files(target_dir, "**/*.kt")
+    return len(kt_files) > 0
+
+
 class JavaDetector(FrameworkDetector):
     def detect(self, target_dir: str) -> tuple[str | None, str | None, list[str]]:
         for cfg_file in ("pom.xml", "build.gradle", "build.gradle.kts"):
@@ -26,7 +32,13 @@ class JavaDetector(FrameworkDetector):
                 continue
 
             content = read_file_safe(path)
-            lang = "kotlin" if cfg_file.endswith(".kts") else "java"
+            # .kts is always Kotlin; for .gradle/.xml, check for .kt source files
+            if cfg_file.endswith(".kts"):
+                lang = "kotlin"
+            elif _detect_kotlin(target_dir):
+                lang = "kotlin"
+            else:
+                lang = "java"
 
             for dep_name, fw in _JAVA_FRAMEWORKS:
                 if dep_name in content:

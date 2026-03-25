@@ -99,8 +99,8 @@ class RequestBody(BaseModel):
 
 
 class Response(BaseModel):
-    status_code: str = Field(description="HTTP status code: '200', '201', '401', '403', '404', '422'. POST that creates → 201, DELETE → 200/204, GET/PUT/PATCH → 200. Auth endpoints must have 401. Path param endpoints should have 404.")
-    description: str = ""
+    status_code: Literal["200", "201", "204", "301", "302", "400", "401", "403", "404", "405", "409", "422", "429", "500", "502", "503"] = Field(description="HTTP status code. POST that creates → '201', DELETE → '200' or '204', GET/PUT/PATCH → '200'. Auth endpoints must have '401'. Path param endpoints should have '404'.")
+    description: str = Field(default="", description="Short human-readable description of this response, e.g. 'User created successfully', 'Not found', 'Unauthorized'. Empty string if not evident from code.")
     schema_ref: RefHint = Field(description="Type reference for the response body. Always provide — use resolution='unresolvable' with a descriptive ref_hint for the response type. For bodyless responses (204, 401 with no detail), use ref_hint='' with resolution='unresolvable'.")
 
 
@@ -117,8 +117,8 @@ class Endpoint(BaseModel):
 
 
 class EndpointDescriptor(BaseModel):
-    source_file: str
-    endpoints: list[Endpoint]
+    source_file: str = Field(description="Path to the route file being extracted. Set by the harness — do not modify.")
+    endpoints: list[Endpoint] = Field(description="Every HTTP endpoint found in this file. Extract ALL of them — do not skip any.")
     inline_schemas: list[ExtractedSchema] = Field(default_factory=list, description="Schemas for types whose shape is visible in this file's validation code but have no importable class definition (e.g., inline Pydantic models, anonymous types, validation schemas). Infrastructure merges these into the schema store before resolution.")
 
     def inline_schemas_as_dict(self) -> dict[str, dict]:
@@ -136,12 +136,12 @@ class SchemaProperty(BaseModel):
     """A single property on a data model / DTO / entity."""
     name: str = Field(description="Property name as serialized in JSON. Use the alias if a serialization annotation provides one (@JsonProperty, @SerializedName, alias=, CodingKeys). Skip fields with exclusion annotations (@JsonIgnore, [JsonIgnore], @Transient, @Expose(serialize:false)).")
     type: Literal["string", "integer", "number", "boolean", "array", "object"] = Field(description="JSON Schema type. Use the base type even for references (use 'object' and set ref).")
-    format: str = Field(default="", description="JSON Schema format when applicable: 'date-time', 'date', 'email', 'uuid', 'uri', 'binary', 'int64', 'float', 'double'. Empty string if none.")
+    format: Literal["", "date-time", "date", "time", "email", "uuid", "uri", "hostname", "ipv4", "ipv6", "binary", "byte", "int32", "int64", "float", "double", "password"] = Field(default="", description="JSON Schema format. Empty string if no specific format applies.")
     ref: str = Field(default="", description="Referenced schema name when this property is a complex type (another model/DTO). Empty for primitives. Use the class name only, not a full $ref path.")
     is_array: bool = Field(default=False, description="True if this property is a list/array/set of the type (List<User> → type='object', ref='User', is_array=True).")
     nullable: bool = Field(default=False, description="True if this property accepts null/None/nil (Optional<T>, T?, T | null).")
     enum_values: list[str] = Field(default_factory=list, description="Enum values if this is an enum type, e.g. ['active', 'inactive', 'banned']. Empty list if not an enum.")
-    constraints: dict[str, object] = Field(default_factory=dict, description="Validation constraints from code annotations/decorators/validators. Use standard JSON Schema keywords: minLength, maxLength, pattern, minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, minItems, maxItems, uniqueItems. Example: {'minLength': 3, 'maxLength': 50, 'pattern': '^[a-zA-Z]+$'}. Empty dict if no constraints.")
+    constraints: dict[str, object] = Field(default_factory=dict, description="Validation constraints from code annotations/decorators/validators. Use ONLY standard JSON Schema keywords with correct value types: minLength (integer), maxLength (integer), pattern (string), minimum (number), maximum (number), exclusiveMinimum (number), exclusiveMaximum (number), multipleOf (number), minItems (integer), maxItems (integer), uniqueItems (boolean). All min/max/length values MUST be numbers, never booleans. Do NOT put 'required' here — field requiredness goes in required_fields on the parent schema. Example: {'minLength': 3, 'maxLength': 50, 'pattern': '^[a-zA-Z]+$'}. Empty dict if no constraints.")
 
 
 class ExtractedSchema(BaseModel):
@@ -153,7 +153,7 @@ class ExtractedSchema(BaseModel):
 
 
 class SchemaDescriptor(BaseModel):
-    source_file: str
+    source_file: str = Field(description="Path to the model file being extracted. Set by the harness — do not modify.")
     schemas: list[ExtractedSchema] = Field(description="Every model/entity/DTO/record class in this file. Extract ALL of them — do not skip any.")
 
     def to_json_schema_dict(self) -> dict[str, dict]:

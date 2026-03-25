@@ -53,6 +53,38 @@ def glob_files(target_dir: str, pattern: str) -> list[str]:
     return matches
 
 
+# Language -> glob pattern for source files.
+# Single source of truth — used by prescan, server detection, importers, auth context.
+LANG_EXT_MAP: dict[str, str] = {
+    "javascript": "**/*.{js,ts,mjs,cjs}",
+    "typescript": "**/*.{ts,js,mjs,cjs}",
+    "python": "**/*.py",
+    "go": "**/*.go",
+    "ruby": "**/*.rb",
+    "rust": "**/*.rs",
+    "php": "**/*.php",
+    "java": "**/*.{java,kt}",
+    "kotlin": "**/*.{kt,java}",
+    "csharp": "**/*.cs",
+    "swift": "**/*.swift",
+    "dart": "**/*.dart",
+    "haskell": "**/*.hs",
+    "ocaml": "**/*.{ml,mli}",
+    "clojure": "**/*.{clj,cljs,cljc}",
+}
+
+# Extended version that includes config files (properties/yaml) for Java/Kotlin.
+# Used by server/base-path detection where config files are relevant.
+LANG_EXT_MAP_WITH_CONFIG: dict[str, str] = {
+    **LANG_EXT_MAP,
+    "java": "**/*.{java,kt,properties,yml,yaml}",
+    "kotlin": "**/*.{kt,java,properties,yml,yaml}",
+}
+
+# Fallback glob when language is unknown
+LANG_EXT_FALLBACK = "**/*.{rb,py,js,ts,go,java,kt,cs,php,rs,swift,dart}"
+
+
 def read_file_safe(path: str, max_bytes: int = 64_000) -> str:
     """Read a file, returning '' on any error."""
     try:

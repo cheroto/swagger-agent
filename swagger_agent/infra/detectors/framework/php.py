@@ -12,7 +12,7 @@ _PHP_FRAMEWORKS: list[tuple[str, str]] = [
     ("laravel/framework", "laravel"),
     ("slim/slim", "slim"),
     ("symfony/framework-bundle", "symfony"),
-    ("lumen", "lumen"),
+    ("laravel/lumen-framework", "lumen"),
 ]
 
 

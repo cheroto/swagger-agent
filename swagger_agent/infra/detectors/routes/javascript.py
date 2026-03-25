@@ -4,13 +4,14 @@ from swagger_agent.infra.detectors.routes._base import RoutePattern
 
 PATTERNS: dict[str, list[RoutePattern]] = {
     "express": [
-        ("**/*.{js,ts}", r"(router|app)\.(get|post|put|patch|delete|all|route)\s*\("),
+        # Match any variable calling HTTP methods — not just 'router' or 'app'
+        ("**/*.{js,ts}", r"\w+\.(get|post|put|patch|delete|all|route)\s*\(\s*['\"\/]"),
     ],
     "fastify": [
-        ("**/*.{js,ts}", r"(fastify|app|server)\.(get|post|put|patch|delete|route)\s*\("),
+        ("**/*.{js,ts}", r"\w+\.(get|post|put|patch|delete|route)\s*\(\s*['\"\/]"),
     ],
     "koa": [
-        ("**/*.{js,ts}", r"router\.(get|post|put|patch|delete|all)\s*\("),
+        ("**/*.{js,ts}", r"\w+\.(get|post|put|patch|delete|all)\s*\(\s*['\"\/]"),
     ],
     "hapi": [
         ("**/*.{js,ts}", r"server\.route\s*\("),

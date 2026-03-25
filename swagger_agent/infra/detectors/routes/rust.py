@@ -9,7 +9,6 @@ PATTERNS: dict[str, list[RoutePattern]] = {
     ],
     "axum": [
         ("**/*.rs", r"\.(get|post|put|patch|delete|route)\s*\("),
-        ("**/*.rs", r"Router::new\s*\(\s*\)"),
     ],
     "rocket": [
         ("**/*.rs", r"#\[(get|post|put|patch|delete)\s*\("),

@@ -55,21 +55,24 @@ assert set(SCOUT_TASK_NAMES) == set(ScoutTaskLiteral.__args__), (  # type: ignor
 class StateUpdates(BaseModel):
     """Structured findings to merge into working state."""
 
-    framework: str | None = None
-    language: str | None = None
-    route_files: list[str] | None = None
-    servers: list[str] | None = None
-    base_path: str | None = None
+    framework: str | None = Field(default=None, description="Web framework name, e.g. 'express', 'fastapi', 'spring', 'rails'. Set when identified from dependencies or code.")
+    language: str | None = Field(default=None, description="Programming language, e.g. 'javascript', 'python', 'java', 'ruby'. Set when identified.")
+    route_files: list[str] | None = Field(default=None, description="Source files containing HTTP endpoint definitions (route registrations, controller classes). Paths relative to project root.")
+    servers: list[str] | None = Field(default=None, description="Server URLs found in code, e.g. 'http://localhost:3000'. Include protocol and port.")
+    base_path: str | None = Field(default=None, description="API base path prefix applied to all routes, e.g. '/api/v1'. Empty string if none.")
     completed_tasks: list[ScoutTaskLiteral] = Field(
         default_factory=list,
         description="Task names to mark as complete and remove from remaining_tasks",
     )
 
 
+ScoutToolLiteral = Literal["glob", "grep", "read_file_head", "read_file_range", "write_artifact"]
+
+
 class ScoutAction(BaseModel):
     """A single tool call from the Scout."""
 
-    tool: str = Field(description="Tool name: glob, grep, read_file_head, read_file_range, or write_artifact")
+    tool: ScoutToolLiteral = Field(description="Tool name to execute this turn.")
     arguments: dict = Field(description="Tool arguments as a JSON object")
 
 

@@ -14,6 +14,7 @@ PATTERNS: dict[str, list[RoutePattern]] = {
     "django": [
         ("**/urls.py", r"(path|re_path|url)\s*\("),
         ("**/*.py", r"@(api_view|action)\s*\("),
+        ("**/*.py", r"\.(register)\s*\("),  # DefaultRouter/SimpleRouter.register()
     ],
     "starlette": [
         ("**/*.py", r"Route\s*\("),

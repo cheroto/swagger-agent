@@ -21,7 +21,7 @@ from swagger_agent.agents.route_extractor.prompt import (
     CODE_ANALYSIS_PROMPT,
     build_phase2_prompt,
 )
-from swagger_agent.infra.ctags_filter import prefilter_route_file
+
 from swagger_agent.telemetry import LLMCall, Telemetry, measure_messages
 
 logger = logging.getLogger("swagger_agent.route_extractor")
@@ -132,39 +132,40 @@ def run_route_extractor(
             timestamp=p1_start,
         ))
 
-    # 4. Prefilter: use ctags to build a condensed file view for Phase 2
-    handler_names = [ep.handler_name for ep in analysis.endpoints]
-    pf = prefilter_route_file(target_file, file_content, handler_names)
-
-    if pf.was_filtered:
-        logger.info(
-            "Ctags prefilter: %s reduced from %d to %d chars (%.0f%% reduction, "
-            "matched %d/%d handlers)",
-            context.target_file, pf.original_chars, pf.filtered_chars,
-            (1 - pf.filtered_chars / pf.original_chars) * 100,
-            len(pf.matched_handlers), len(handler_names),
+    # 4. Skip Phase 2 when Phase 1 found no endpoints — the file is likely
+    #    config/bootstrap, not a route file. Saves an LLM call and avoids
+    #    false positives (e.g. swagger-ui setup extracted as an endpoint).
+    if not analysis.endpoints:
+        logger.info("Phase 1 found 0 endpoints in %s — skipping Phase 2", target_file)
+        descriptor = EndpointDescriptor(
+            source_file=context.target_file, endpoints=[],
         )
-        if pf.unmatched_handlers:
-            logger.warning(
-                "Ctags prefilter: unmatched handlers in %s: %s",
-                context.target_file, pf.unmatched_handlers,
-            )
-    else:
-        logger.debug(
-            "Ctags prefilter: no reduction for %s — reason: %s "
-            "(handlers: %s, matched: %s, unmatched: %s)",
-            context.target_file, pf.reason,
-            handler_names, pf.matched_handlers, pf.unmatched_handlers,
+        run_record = RouteExtractorRunRecord(
+            target_file=context.target_file,
+            context={
+                "framework": context.framework,
+                "base_path": context.base_path,
+                "target_file": context.target_file,
+            },
+            endpoint_count=0,
+            descriptor=descriptor.model_dump(by_alias=True),
+            duration_ms=phase1_duration_ms,
+            phase1_duration_ms=phase1_duration_ms,
+            phase2_duration_ms=0.0,
+            code_analysis=analysis.model_dump(),
+            code_analysis_obj=analysis,
+            mount_map=analysis.mount_map,
+            file_lines=file_lines,
         )
+        return descriptor, run_record
 
-    # Build Phase 2 user message with (possibly filtered) content
+    # 5. Phase 2: Endpoint Extraction
     p2_user_message = (
         f"## Context\n\n```json\n{context_json}\n```\n\n"
         f"## Route File: {context.target_file}\n\n"
-        f"```\n{pf.content}\n```"
+        f"```\n{file_content}\n```"
     )
 
-    # 5. Phase 2: Endpoint Extraction
     phase2_prompt = build_phase2_prompt(
         analysis, context.base_path, context.mount_prefix,
         context.default_auth_hint, context.default_auth_mode,

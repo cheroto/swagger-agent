@@ -5,7 +5,12 @@ from __future__ import annotations
 import os
 import re
 
-from swagger_agent.infra.detectors._utils import glob_files, read_file_safe
+from swagger_agent.infra.detectors._utils import (
+    LANG_EXT_MAP,
+    LANG_EXT_MAP_WITH_CONFIG,
+    glob_files,
+    read_file_safe,
+)
 
 # Patterns to find port numbers in source/config
 _PORT_PATTERNS = [
@@ -49,33 +54,6 @@ _DEFAULT_PORTS: dict[str, int] = {
     "csharp": 5000,
 }
 
-# Language -> glob pattern for source files
-_EXT_MAP: dict[str, str] = {
-    "javascript": "**/*.{js,ts}",
-    "typescript": "**/*.{ts,js}",
-    "python": "**/*.py",
-    "java": "**/*.java",
-    "kotlin": "**/*.kt",
-    "go": "**/*.go",
-    "ruby": "**/*.rb",
-    "rust": "**/*.rs",
-    "php": "**/*.php",
-    "csharp": "**/*.cs",
-}
-
-_EXT_MAP_BP: dict[str, str] = {
-    "javascript": "**/*.{js,ts}",
-    "typescript": "**/*.{ts,js}",
-    "python": "**/*.py",
-    "java": "**/*.{java,properties,yml,yaml}",
-    "kotlin": "**/*.{kt,properties,yml,yaml}",
-    "go": "**/*.go",
-    "ruby": "**/*.rb",
-    "rust": "**/*.rs",
-    "php": "**/*.php",
-    "csharp": "**/*.cs",
-}
-
 
 def find_servers(
     target_dir: str,
@@ -90,11 +68,27 @@ def find_servers(
     port: int | None = None
     base_path = ""
 
-    # Check config files first
+    # Check config files first — include src/main/resources/ for Spring Boot
     config_files = [
         ".env", ".env.example", ".env.local",
         "application.properties", "application.yml", "application.yaml",
+        # Spring Boot standard location
+        "src/main/resources/application.properties",
+        "src/main/resources/application.yml",
+        "src/main/resources/application.yaml",
     ]
+
+    # For Java projects, check framework-specific configs before .env
+    # so server.port takes precedence over Docker PORT env vars
+    if language in ("java", "kotlin"):
+        config_files = [
+            "application.properties", "application.yml", "application.yaml",
+            "src/main/resources/application.properties",
+            "src/main/resources/application.yml",
+            "src/main/resources/application.yaml",
+            ".env", ".env.example", ".env.local",
+        ]
+
     for cfg in config_files:
         path = os.path.join(target_dir, cfg)
         if not os.path.isfile(path):
@@ -114,7 +108,7 @@ def find_servers(
 
     # Check source files for port if not found in config
     if port is None and language:
-        glob_pat = _EXT_MAP.get(language)
+        glob_pat = LANG_EXT_MAP.get(language)
         if glob_pat:
             candidates = glob_files(target_dir, glob_pat)
             entry_hints = ("main", "app", "server", "index", "program", "startup")
@@ -137,14 +131,12 @@ def find_servers(
                 if port:
                     break
 
-    # Check for base path in route files and entry points — collect all
-    # matches and pick the shortest (most general prefix).
+    # Check for base path in route files and entry points
     if language:
-        glob_pat = _EXT_MAP_BP.get(language)
+        glob_pat = LANG_EXT_MAP_WITH_CONFIG.get(language)
         if glob_pat:
-            all_bp_matches: list[tuple[str, str]] = []  # (base_path, source_file)
+            all_bp_matches: list[tuple[str, str]] = []
             candidates = glob_files(target_dir, glob_pat)
-            # Prioritize entry point files where base paths are typically configured
             entry_hints = ("main", "app", "server", "index", "program", "startup", "bootstrap", "kernel")
             entry_files = [
                 f for f in candidates
@@ -159,9 +151,7 @@ def find_servers(
                     for m in re.finditer(pattern, content):
                         all_bp_matches.append((m.group(1), rel_path))
             if all_bp_matches:
-                # Pick shortest match — most general prefix
                 base_path, bp_source = min(all_bp_matches, key=lambda x: len(x[0]))
-                # Ensure leading /
                 if base_path and not base_path.startswith("/"):
                     base_path = "/" + base_path
                 notes.append(f"Found base path '{base_path}' in {bp_source} (from {len(all_bp_matches)} candidate(s))")

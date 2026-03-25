@@ -188,15 +188,15 @@ PRESCAN_GOLDEN: list[PrescanGolden] = [
         ),
     ),
     # -----------------------------------------------------------------------
-    # 7. 9jauni — Go net/http
-    # Framework detected from go.mod. Route files not found because main.go
-    # is at the repo root and the glob pattern **/*.go doesn't match root-
-    # level files (fnmatch ** doesn't match zero path segments).
+    # 7. 9jauni — Go (no recognized framework in go.mod)
+    # go.mod exists but contains no recognized web framework dependency,
+    # so framework is None and language is "go". The verb sweep catches
+    # route files that the framework-specific detection cannot.
     # -----------------------------------------------------------------------
     PrescanGolden(
         repo_id="9jauni",
         repo_dir="9jauni",
-        framework="net/http",
+        framework=None,
         language="go",
         min_route_files=0,
         expected_server_substrings=["localhost:8080"],

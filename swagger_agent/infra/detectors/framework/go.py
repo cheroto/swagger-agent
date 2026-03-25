@@ -27,7 +27,9 @@ class GoDetector(FrameworkDetector):
             if dep_path in content:
                 return fw, "go", [f"Found {dep_path} in go.mod"]
 
-        if "net/http" in content or "module " in content:
-            return "net/http", "go", ["Found go.mod, assuming net/http stdlib"]
+        if "net/http" in content:
+            return "net/http", "go", ["Found net/http import in go.mod"]
 
-        return None, None, []
+        # go.mod exists but no recognized framework — return language only
+        # so route detection can still run via verb sweep
+        return None, "go", ["Found go.mod but no recognized web framework"]

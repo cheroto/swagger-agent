@@ -18,9 +18,6 @@ PATTERNS: dict[str, list[RoutePattern]] = {
     "gorilla": [
         ("**/*.go", r"\.(HandleFunc|Handle|Methods)\s*\("),
     ],
-    "go-net-http": [
-        ("**/*.go", r"http\.(HandleFunc|Handle|ListenAndServe)"),
-    ],
     "net/http": [
         ("**/*.go", r"http\.(HandleFunc|Handle|ListenAndServe)"),
     ],
