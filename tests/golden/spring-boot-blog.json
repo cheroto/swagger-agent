@@ -84,7 +84,7 @@
     {"name": "UserIdentityAvailability", "properties": ["available"]},
     {"name": "UserProfile", "properties": ["id", "username", "firstName", "lastName", "joinedAt", "email", "address", "phone", "website", "company", "postCount"]},
     {"name": "UserSummary", "properties": ["id", "username", "firstName", "lastName"]},
-    {"name": "ExceptionResponse", "properties": ["error", "status", "messages", "timestamp"]},
+    {"name": "RoleName", "properties": ["ROLE_ADMIN", "ROLE_USER"]},
     {"name": "DateAudit", "properties": ["createdAt", "updatedAt"]},
     {"name": "UserDateAudit", "properties": ["createdAt", "updatedAt", "createdBy", "updatedBy"]},
     {"name": "DateAuditPayload", "properties": ["createdAt", "updatedAt"]},
