@@ -32,8 +32,8 @@ _BASE_PATH_PATTERNS = [
     (r"app\.use\s*\(\s*['\"](/(?!docs|static|public|health|swagger)[a-zA-Z0-9/_-]+)['\"]", "source"),
     # FastAPI: app = FastAPI(root_path=...)
     (r"root_path\s*=\s*['\"](/[a-zA-Z0-9/_-]+)['\"]", "source"),
-    # FastAPI/Flask/NestJS: prefix='...' or setGlobalPrefix('...')
-    (r"(?:prefix|setGlobalPrefix)\s*[\(=:]\s*['\"]/?([a-zA-Z0-9/_-]+)['\"]", "source"),
+    # FastAPI/Flask/NestJS: prefix='...', url_prefix='...', setGlobalPrefix('...')
+    (r"(?:prefix|url_prefix|setGlobalPrefix)\s*[\(=:]\s*['\"]/?([a-zA-Z0-9/_-]+)['\"]", "source"),
     # Spring: server.servlet.context-path=/api
     (r"context-path\s*=\s*(/[a-zA-Z0-9/_-]+)", "config"),
     # Generic
@@ -151,7 +151,14 @@ def find_servers(
                     for m in re.finditer(pattern, content):
                         all_bp_matches.append((m.group(1), rel_path))
             if all_bp_matches:
-                base_path, bp_source = min(all_bp_matches, key=lambda x: len(x[0]))
+                # Prefer paths containing 'api' (versioned API prefixes) over
+                # sub-blueprint prefixes like '/auth'. Among api-paths, pick
+                # the shortest. Fall back to shortest overall if none contain 'api'.
+                api_matches = [(bp, src) for bp, src in all_bp_matches if "api" in bp.lower()]
+                if api_matches:
+                    base_path, bp_source = min(api_matches, key=lambda x: len(x[0]))
+                else:
+                    base_path, bp_source = min(all_bp_matches, key=lambda x: len(x[0]))
                 if base_path and not base_path.startswith("/"):
                     base_path = "/" + base_path
                 notes.append(f"Found base path '{base_path}' in {bp_source} (from {len(all_bp_matches)} candidate(s))")

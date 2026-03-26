@@ -207,7 +207,7 @@ The system has two layers: **LLM-powered agents** that interpret source code, an
 | **Assembler** | Builds OpenAPI YAML from artifacts |
 | **Validator** | Runs OpenAPI spec validation |
 | **Completeness Checker** | Evaluates the spec against a quality checklist |
-| **Ctags Prefilter** | Strips function bodies from route files before Phase 2 extraction to reduce LLM input |
+| **Prescan** | Deterministic framework/route/server detection that seeds the Scout agent |
 
 ## Configuration
 
@@ -308,6 +308,11 @@ tests/
 - **Agents produce JSON, infrastructure produces YAML**: This boundary is absolute. Agents never build specs, infrastructure never interprets source code.
 - **Lazy schema extraction**: Only extracts models reachable from route type references. Never scans the full model tree.
 - **Working output over perfect output**: Emits what it can extract, uses reasonable defaults for what it can't. Never blocks on missing information.
+
+## Known limitations
+
+- **Single base path per run.** The pipeline applies one API prefix (e.g., `/api/v1`) to all endpoints. Projects that mount multiple route groups at different prefixes (e.g., `/api/v1` for the main API and `/auth` for OAuth endpoints) will have incorrect paths on routes outside the primary API group.
+- **Parent schema resolution.** Schema inheritance is resolved downward (subtypes are discovered from parent schemas) but not upward. If a schema extends a parent class that no endpoint directly references, the parent may not be extracted.
 
 ## Accuracy and completeness
 
